@@ -136,6 +136,7 @@ else
                     "--runtime=nvidia"
                     "--gpus=all"
                     "-v" "./docs:${WORKDIR}/docs"
+                    "-v" "./cvpr_assets:${WORKDIR}/cvpr_assets"
                     "-v" "./isaaclab_arena:${WORKDIR}/isaaclab_arena"
                     "-v" "./isaaclab_arena_g1:${WORKDIR}/isaaclab_arena_g1"
                     "-v" "./isaaclab_arena_gr00t:${WORKDIR}/isaaclab_arena_gr00t"

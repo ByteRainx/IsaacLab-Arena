@@ -41,6 +41,16 @@ add_example_environments_cli_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
 
+# ensure teleop_device exists
+if not hasattr(args_cli, "teleop_device") or args_cli.teleop_device is None:
+    args_cli.teleop_device = "keyboard"
+if isinstance(args_cli.teleop_device, str) and (args_cli.teleop_device == "cpu" or args_cli.teleop_device.startswith("cuda")):
+    args_cli.teleop_device = "keyboard"
+
+# ensure task exists (fallback to selected example env)
+if not hasattr(args_cli, "task") or args_cli.task is None:
+    args_cli.task = getattr(args_cli, "example_environment", None) or getattr(args_cli, "environment", "") or ""
+
 app_launcher_args = vars(args_cli)
 
 if args_cli.enable_pinocchio:

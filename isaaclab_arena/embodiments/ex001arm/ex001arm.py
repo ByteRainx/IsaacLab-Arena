@@ -148,7 +148,7 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             usd_path=usd_path,
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=False,
+                disable_gravity=True,
                 max_depenetration_velocity=5.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
@@ -160,7 +160,7 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(-1.0, 0.0, -0.57),
+            pos=(-0.5, 0.0, -0.4),
         ),
         actuators={
             # 左臂执行器 (6个关节)
@@ -193,6 +193,7 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
     )
 
 
+@configclass
 class EX001ArmActionsCfg:
     """Action specifications for the MDP (left arm + left gripper)."""
 

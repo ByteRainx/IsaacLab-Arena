@@ -1,4 +1,4 @@
-# Copyright (c) 2025-2026, The Isaac Lab Arena Project Developers (https://github.com/isaac-sim/IsaacLab-Arena/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2025, The Isaac Lab Arena Project Developers (https://github.com/isaac-sim/IsaacLab-Arena/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -25,9 +25,7 @@ from isaaclab_arena.utils.pose import Pose
 asset_registry = AssetRegistry()
 
 background = asset_registry.get_asset_by_name("kitchen")()
-import os
-embodiment_name = os.environ.get("ISAACLAB_ARENA_EMBODIMENT", "ex001arm")
-embodiment = asset_registry.get_asset_by_name(embodiment_name)()
+embodiment = asset_registry.get_asset_by_name("ex001arm")()
 cracker_box = asset_registry.get_asset_by_name("cracker_box")()
 
 cracker_box.set_initial_pose(Pose(position_xyz=(0.4, 0.0, 0.1), rotation_wxyz=(1.0, 0.0, 0.0, 0.0)))
