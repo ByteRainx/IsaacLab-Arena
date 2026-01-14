@@ -21,6 +21,9 @@ from isaaclab_arena.examples.example_environments.kitchen_pick_and_place_environ
 from isaaclab_arena.examples.example_environments.kitchen_pick_and_place_ex001arm_environment import (
     KitchenPickAndPlaceEx001ArmEnvironment,
 )
+from isaaclab_arena.examples.example_environments.kitchen_pick_and_place_ex001arm_cvpr_assets_environment import (
+    KitchenPickAndPlaceEx001ArmCvprAssetsEnvironment,
+)
 from isaaclab_arena.examples.example_environments.press_button_environment import PressButtonEnvironment
 
 # NOTE(alexmillane, 2025.09.04): There is an issue with type annotation in this file.
@@ -35,6 +38,7 @@ ExampleEnvironments = {
     Gr1OpenMicrowaveEnvironment.name: Gr1OpenMicrowaveEnvironment,
     KitchenPickAndPlaceEnvironment.name: KitchenPickAndPlaceEnvironment,
     KitchenPickAndPlaceEx001ArmEnvironment.name: KitchenPickAndPlaceEx001ArmEnvironment,
+    KitchenPickAndPlaceEx001ArmCvprAssetsEnvironment.name: KitchenPickAndPlaceEx001ArmCvprAssetsEnvironment,
     GalileoPickAndPlaceEnvironment.name: GalileoPickAndPlaceEnvironment,
     GalileoG1LocomanipPickAndPlaceEnvironment.name: GalileoG1LocomanipPickAndPlaceEnvironment,
     PressButtonEnvironment.name: PressButtonEnvironment,

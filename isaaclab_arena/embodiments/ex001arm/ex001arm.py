@@ -182,7 +182,8 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(-0.5, 0.0, -0.4),
+            pos=(-0.51676, -0.25918, -0.58061),
+            rot=(0.04894564807667012, 0.0, 0.0, 0.9988014434983336),
         ),
         actuators={
             # 左臂执行器 (6个关节)
