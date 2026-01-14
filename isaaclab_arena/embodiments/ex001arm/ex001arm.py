@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from dataclasses import MISSING
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import isaaclab.envs.mdp as mdp_isaac_lab
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -17,7 +17,9 @@ from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab.envs.mdp.actions.actions_cfg import BinaryJointPositionActionCfg, DifferentialInverseKinematicsActionCfg
 from isaaclab.managers import ActionTermCfg, ObservationGroupCfg as ObsGroup, ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.sensors import CameraCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg, OffsetCfg
+from isaaclab.sim import PinholeCameraCfg
 from isaaclab.utils import configclass
 from isaaclab_tasks.manager_based.manipulation.stack.mdp.observations import ee_frame_pos, ee_frame_quat
 
@@ -35,6 +37,28 @@ def _default_ex001arm_usd_path() -> str:
     arena_root = Path(__file__).resolve().parents[3]
     cvpr_assets_path = arena_root / "cvpr_assets" / "ex001_arm.usd"
     return cvpr_assets_path.as_posix()
+
+
+def update_opencv_fisheye_camera(prim_path: str, cfg: "OpenCVFisheyeCameraCfg",
+                                  translation=None, orientation=None):
+    """Update fisheye camera clipping range only."""
+    import omni.usd
+    from pxr import UsdGeom, Gf, Usd
+    
+    stage = omni.usd.get_context().get_stage()
+    prim = stage.GetPrimAtPath(prim_path)
+    if prim.IsValid() and cfg.clipping_range:
+        camera = UsdGeom.Camera(prim)
+        camera.GetClippingRangeAttr().Set(Gf.Vec2f(*cfg.clipping_range))
+    return prim
+
+
+@configclass
+class OpenCVFisheyeCameraCfg(PinholeCameraCfg):
+    """Configuration for updating an existing OpenCV fisheye camera (clipping range only)."""
+    func: Callable = update_opencv_fisheye_camera
+    copy_from_source: bool = False
+    clipping_range: tuple[float, float] | None = None
 
 
 def ex001arm_left_gripper_pos(env, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
@@ -163,6 +187,30 @@ class EX001ArmSceneCfg:
         ],
     )
 
+    # 左腕相机（Fisheye OpenCV Camera）
+    left_wrist_camera: CameraCfg = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_camera_color_frame/Left_Gripper_Camera",
+        update_period=0.0333,
+        height=640,
+        width=480,
+        data_types=["rgb", "distance_to_image_plane"],
+        spawn=OpenCVFisheyeCameraCfg(
+            clipping_range=(0.1, 1.0e5),
+        ),
+    )
+
+    # 右腕相机（Fisheye OpenCV Camera）
+    right_wrist_camera: CameraCfg = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_camera_color_frame/Right_Gripper_Camera",
+        update_period=0.0333,
+        height=640,
+        width=480,
+        data_types=["rgb", "distance_to_image_plane"],
+        spawn=OpenCVFisheyeCameraCfg(
+            clipping_range=(0.1, 1.0e5),
+        ),
+    )
+
 
 def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
     return ArticulationCfg(
@@ -270,6 +318,17 @@ class EX001ArmObservationsCfg:
         right_eef_pos = ObsTerm(func=ee_frame_pos, params={"ee_frame_cfg": SceneEntityCfg("right_ee_frame")})
         right_eef_quat = ObsTerm(func=ee_frame_quat, params={"ee_frame_cfg": SceneEntityCfg("right_ee_frame")})
         right_gripper_pos = ObsTerm(func=ex001arm_right_gripper_pos, params={"asset_cfg": SceneEntityCfg("robot")})
+        
+        # 左腕相机观测
+        left_wrist_cam = ObsTerm(
+            func=mdp_isaac_lab.image, 
+            params={"sensor_cfg": SceneEntityCfg("left_wrist_camera"), "data_type": "rgb", "normalize": False}
+        )
+        # 右腕相机观测
+        right_wrist_cam = ObsTerm(
+            func=mdp_isaac_lab.image, 
+            params={"sensor_cfg": SceneEntityCfg("right_wrist_camera"), "data_type": "rgb", "normalize": False}
+        )
 
         def __post_init__(self):
             self.enable_corruption = False
