@@ -60,9 +60,31 @@ def ex001arm_left_gripper_pos(env, asset_cfg: SceneEntityCfg = SceneEntityCfg("r
     return gripper_opening
 
 
+def ex001arm_right_gripper_pos(env, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
+    """ex001Arm right gripper position observation.
+
+    Prefer mimic finger joint difference if available; otherwise fall back to the gripper joint position.
+    Returns a 1-dim observation.
+    """
+    from isaaclab.assets import Articulation
+    import torch
+
+    robot: Articulation = env.scene[asset_cfg.name]
+
+    try:
+        left_finger_ids, _ = robot.find_joints(["right_arm_gripper_left_joint"])
+        right_finger_ids, _ = robot.find_joints(["right_arm_gripper_right_joint"])
+        left_finger_pos = robot.data.joint_pos[:, left_finger_ids]
+        right_finger_pos = robot.data.joint_pos[:, right_finger_ids]
+        return left_finger_pos - right_finger_pos
+    except Exception:
+        gripper_ids, _ = robot.find_joints(["right_arm_gripper"])
+        return robot.data.joint_pos[:, gripper_ids].reshape(-1, 1)
+
+
 @register_asset
 class EX001ArmEmbodiment(EmbodimentBase):
-    """Embodiment for the EX001Arm bimanual robot (left arm controllable by default)."""
+    """Embodiment for the EX001Arm bimanual robot (both arms controllable)."""
 
     name = "ex001arm"
 
@@ -195,7 +217,7 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
 
 @configclass
 class EX001ArmActionsCfg:
-    """Action specifications for the MDP (left arm + left gripper)."""
+    """Action specifications for the MDP (bimanual: left+right arms and grippers)."""
 
     # 左臂 IK 动作
     arm_action: ActionTermCfg = DifferentialInverseKinematicsActionCfg(
@@ -214,6 +236,23 @@ class EX001ArmActionsCfg:
         close_command_expr={"left_arm_gripper": 0.0},
     )
 
+    # 右臂 IK 动作
+    right_arm_action: ActionTermCfg = DifferentialInverseKinematicsActionCfg(
+        asset_name="robot",
+        joint_names=["right_arm_joint[1-6]"],
+        body_name="right_arm_gripper_base_link",
+        controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=True, ik_method="dls"),
+        scale=0.5,
+    )
+
+    # 右夹爪二值动作
+    right_gripper_action: ActionTermCfg = BinaryJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["right_arm_gripper"],
+        open_command_expr={"right_arm_gripper": 5.0},
+        close_command_expr={"right_arm_gripper": 0.0},
+    )
+
 
 @configclass
 class EX001ArmObservationsCfg:
@@ -227,7 +266,12 @@ class EX001ArmObservationsCfg:
         eef_pos = ObsTerm(func=ee_frame_pos)
         eef_quat = ObsTerm(func=ee_frame_quat)
         gripper_pos = ObsTerm(func=ex001arm_left_gripper_pos, params={"asset_cfg": SceneEntityCfg("robot")})
+        right_eef_pos = ObsTerm(func=ee_frame_pos, params={"ee_frame_cfg": SceneEntityCfg("right_ee_frame")})
+        right_eef_quat = ObsTerm(func=ee_frame_quat, params={"ee_frame_cfg": SceneEntityCfg("right_ee_frame")})
+        right_gripper_pos = ObsTerm(func=ex001arm_right_gripper_pos, params={"asset_cfg": SceneEntityCfg("robot")})
 
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = False
+
+    policy: PolicyCfg = PolicyCfg()

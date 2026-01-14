@@ -26,6 +26,9 @@ RUN apt-get update && apt-get install -y \
 # Update pip to the latest version
 RUN pip3 install --upgrade pip
 
+# Work around occasional HTTP/2 transport issues during git clones inside pip (e.g. rl-games).
+RUN git config --global http.version HTTP/1.1
+
 ################################
 # Install Isaac Lab
 ################################

@@ -32,6 +32,13 @@ parser.add_argument(
     default=False,
     help="Enable Pinocchio.",
 )
+parser.add_argument(
+    "--arm",
+    type=str,
+    default="left",
+    choices=("left", "right", "both"),
+    help="For bimanual embodiments, which arm(s) to control with a single SE(3)+gripper device.",
+)
 
 # Add the example environments CLI args
 # NOTE(alexmillane, 2025.09.04): This has to be added last, because
@@ -241,6 +248,30 @@ def main() -> None:
 
     print("Teleoperation started. Press 'R' to reset the environment.")
 
+    arm_mode = args_cli.arm
+
+    def set_arm_mode(mode: str) -> None:
+        nonlocal arm_mode
+        arm_mode = mode
+        omni.log.info(f"Teleop arm mode set to: {arm_mode}")
+
+    # Optional runtime toggles (works for keyboard-like devices that expose add_callback).
+    if hasattr(teleop_interface, "add_callback"):
+        try:
+            teleop_interface.add_callback("1", lambda: set_arm_mode("left"))
+            teleop_interface.add_callback("2", lambda: set_arm_mode("right"))
+            teleop_interface.add_callback("3", lambda: set_arm_mode("both"))
+        except Exception:
+            pass
+
+    warned_action_mismatch = False
+    # NOTE: For vectorized envs, env.action_space shape is (num_envs, action_dim).
+    expected_action_dim = None
+    if hasattr(env, "single_action_space") and hasattr(env.single_action_space, "shape"):
+        expected_action_dim = env.single_action_space.shape[0]
+    elif hasattr(env, "action_space") and hasattr(env.action_space, "shape"):
+        expected_action_dim = env.action_space.shape[-1]
+
     # simulate environment
     while simulation_app.is_running():
         try:
@@ -251,8 +282,38 @@ def main() -> None:
 
                 # Only apply teleop commands when active
                 if teleoperation_active:
+                    # Map device action to environment action dimension (supports bimanual padding).
+                    device_action = action
+                    if expected_action_dim is not None and hasattr(device_action, "shape"):
+                        device_dim = device_action.shape[-1]
+                        if expected_action_dim != device_dim:
+                            if (expected_action_dim == 2 * device_dim) and (arm_mode in ("left", "right", "both")):
+                                mapped = torch.zeros(
+                                    (expected_action_dim,), device=device_action.device, dtype=device_action.dtype
+                                )
+                                if arm_mode in ("left", "both"):
+                                    mapped[:device_dim] = device_action
+                                if arm_mode in ("right", "both"):
+                                    mapped[device_dim:] = device_action
+                                device_action = mapped
+                            elif expected_action_dim > device_dim:
+                                mapped = torch.zeros(
+                                    (expected_action_dim,), device=device_action.device, dtype=device_action.dtype
+                                )
+                                mapped[:device_dim] = device_action
+                                device_action = mapped
+                            else:
+                                device_action = device_action[:expected_action_dim]
+
+                            if not warned_action_mismatch:
+                                omni.log.warn(
+                                    f"Teleop action dim ({device_dim}) != env action dim ({expected_action_dim}). "
+                                    f"Auto-mapping enabled (arm={arm_mode})."
+                                )
+                                warned_action_mismatch = True
+
                     # process actions
-                    actions = action.repeat(env.num_envs, 1)
+                    actions = device_action.repeat(env.num_envs, 1)
                     # apply actions
                     env.step(actions)
                 else:
