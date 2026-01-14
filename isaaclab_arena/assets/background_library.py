@@ -139,7 +139,7 @@ class CvprAssetsBackground(LibraryBackground):
     tags = ["background"]
     usd_path = _default_cvpr_assets_scene_path()
     initial_pose = Pose(position_xyz=(0.0, 0.0, 0.0), rotation_wxyz=(1.0, 0.0, 0.0, 0.0))
-    object_min_z = -0.2
+    object_min_z = -0.4
 
     def __init__(self):
         super().__init__()

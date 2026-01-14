@@ -18,6 +18,7 @@ class KitchenPickAndPlaceEx001ArmCvprAssetsEnvironment(ExampleEnvironmentBase):
         # Avoid importing IsaacLab modules that depend on Kit/Omni at module import time.
         import isaaclab.sim as sim_utils
         from isaaclab.assets import AssetBaseCfg, ArticulationCfg, RigidObjectCfg
+        from isaaclab.sim.spawners.lights import DistantLightCfg
 
         from isaaclab_arena.assets.object_base import ObjectBase, ObjectType
         from isaaclab_arena.environments.isaaclab_arena_environment import IsaacLabArenaEnvironment
@@ -80,6 +81,17 @@ class KitchenPickAndPlaceEx001ArmCvprAssetsEnvironment(ExampleEnvironmentBase):
                     env_cfg.sim.render_interval = 1
                 if hasattr(env_cfg, "decimation"):
                     env_cfg.decimation = 1
+                
+                # Add distant light to scene
+                env_cfg.scene.distant_light = AssetBaseCfg(
+                    prim_path="/World/DistantLight",
+                    spawn=DistantLightCfg(
+                        color=(1.0, 1.0, 1.0),
+                        intensity=1000.0,
+                        angle=0.53,
+                    ),
+                )
+                
                 return env_cfg
 
         background = self.asset_registry.get_asset_by_name(args_cli.background)()
