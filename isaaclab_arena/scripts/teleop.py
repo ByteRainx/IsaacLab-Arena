@@ -23,6 +23,16 @@ from isaaclab_arena.examples.example_environments.cli import (
     get_arena_builder_from_cli,
 )
 
+def _teleop_device_requires_xr(device_name: str | None) -> bool:
+    if not device_name:
+        return False
+    name = device_name.lower()
+    return any(token in name for token in ("handtracking", "openxr")) or name in {
+        "avp_handtracking",
+        "ex001arm_openxr_bimanual",
+    }
+
+
 # add argparse arguments
 parser = get_isaaclab_arena_cli_parser()
 parser.add_argument("--sensitivity", type=float, default=1.0, help="Sensitivity factor.")
@@ -60,15 +70,16 @@ if not hasattr(args_cli, "task") or args_cli.task is None:
 
 app_launcher_args = vars(args_cli)
 
+# Enable XR independently of pinocchio when using OpenXR-based teleop.
+if _teleop_device_requires_xr(args_cli.teleop_device):
+    app_launcher_args["xr"] = True
+    setattr(args_cli, "xr", True)
+
 if args_cli.enable_pinocchio:
     # Import pinocchio before AppLauncher to force the use of the version installed by IsaacLab and
     # not the one installed by Isaac Sim pinocchio is required by the Pink IK controllers and the
     # GR1T2 retargeter
     import pinocchio  # noqa: F401
-
-    # Keep this on if we use pinocchio as we will use AVP for the humanoid
-    if "handtracking" in args_cli.teleop_device.lower():
-        app_launcher_args["xr"] = True
 
 # launch omniverse app
 app_launcher = AppLauncher(app_launcher_args)
@@ -82,13 +93,34 @@ import torch
 import isaaclab_tasks  # noqa: F401
 import omni.log
 from isaaclab.devices import Se3Gamepad, Se3GamepadCfg, Se3Keyboard, Se3KeyboardCfg, Se3SpaceMouse, Se3SpaceMouseCfg
-from isaaclab.devices.openxr import remove_camera_configs
 from isaaclab.devices.teleop_device_factory import create_teleop_device
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab_tasks.manager_based.manipulation.lift import mdp
 
 if args_cli.enable_pinocchio:
     import isaaclab_tasks.manager_based.manipulation.pick_place  # noqa: F401
+
+
+def _remove_cameras_and_obs(env_cfg):
+    from isaaclab.managers import SceneEntityCfg
+    from isaaclab.sensors import CameraCfg
+
+    removed_names: set[str] = set()
+    for attr_name in dir(env_cfg.scene):
+        attr = getattr(env_cfg.scene, attr_name)
+        if isinstance(attr, CameraCfg):
+            delattr(env_cfg.scene, attr_name)
+            removed_names.add(attr_name)
+
+    if removed_names and hasattr(env_cfg.observations, "policy"):
+        for obs_name in dir(env_cfg.observations.policy):
+            obsterm = getattr(env_cfg.observations.policy, obs_name)
+            if hasattr(obsterm, "params") and obsterm.params:
+                for param_value in obsterm.params.values():
+                    if isinstance(param_value, SceneEntityCfg) and param_value.name in removed_names:
+                        delattr(env_cfg.observations.policy, obs_name)
+                        break
+    return env_cfg
 
 
 def main() -> None:
@@ -114,8 +146,9 @@ def main() -> None:
 
     if args_cli.xr:
         # External cameras are not supported with XR teleop
-        # Check for any camera configs and disable them
-        env_cfg = remove_camera_configs(env_cfg)
+        # Remove cameras only when camera outputs are not requested.
+        if not getattr(args_cli, "enable_cameras", False):
+            env_cfg = _remove_cameras_and_obs(env_cfg)
         env_cfg.sim.render.antialiasing_mode = "DLSS"
 
     try:

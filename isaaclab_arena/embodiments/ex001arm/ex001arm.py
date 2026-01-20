@@ -20,6 +20,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg, OffsetCfg
 from isaaclab.sim import PinholeCameraCfg
+from isaaclab.devices.openxr import XrCfg
 from isaaclab.utils import configclass
 from isaaclab_tasks.manager_based.manipulation.stack.mdp.observations import ee_frame_pos, ee_frame_quat
 
@@ -37,6 +38,20 @@ def _default_ex001arm_usd_path() -> str:
     arena_root = Path(__file__).resolve().parents[3]
     cvpr_assets_path = arena_root / "cvpr_assets" / "ex001_arm.usd"
     return cvpr_assets_path.as_posix()
+
+
+def _parse_env_tuple(env_value: str | None, expected_len: int) -> tuple[float, ...] | None:
+    if not env_value:
+        return None
+    parts = [p.strip() for p in env_value.split(",") if p.strip()]
+    if len(parts) == 1:
+        parts = [p.strip() for p in env_value.split(" ") if p.strip()]
+    if len(parts) != expected_len:
+        return None
+    try:
+        return tuple(float(p) for p in parts)
+    except ValueError:
+        return None
 
 
 def update_opencv_fisheye_camera(prim_path: str, cfg: "OpenCVFisheyeCameraCfg",
@@ -117,6 +132,8 @@ class EX001ArmEmbodiment(EmbodimentBase):
         enable_cameras: bool = False,
         initial_pose: Pose | None = None,
         usd_path: str | None = None,
+        xr_anchor_pos: tuple[float, float, float] | None = None,
+        xr_anchor_rot: tuple[float, float, float, float] | None = None,
     ):
         super().__init__(enable_cameras=enable_cameras, initial_pose=initial_pose)
         self.scene_config = EX001ArmSceneCfg()
@@ -130,6 +147,12 @@ class EX001ArmEmbodiment(EmbodimentBase):
         )
         self.action_config = EX001ArmActionsCfg()
         self.observation_config = EX001ArmObservationsCfg()
+        env_anchor_pos = _parse_env_tuple(os.environ.get("ISAACLAB_ARENA_EX001ARM_XR_ANCHOR_POS"), 3)
+        env_anchor_rot = _parse_env_tuple(os.environ.get("ISAACLAB_ARENA_EX001ARM_XR_ANCHOR_ROT"), 4)
+        self.xr = XrCfg(
+            anchor_pos=xr_anchor_pos or env_anchor_pos or (0.0, 0.0, 0.0),
+            anchor_rot=xr_anchor_rot or env_anchor_rot or (1.0, 0.0, 0.0, 0.0),
+        )
 
     def _update_scene_cfg_with_robot_initial_pose(self, scene_config: Any, pose: Pose) -> Any:
         return super()._update_scene_cfg_with_robot_initial_pose(scene_config, pose)

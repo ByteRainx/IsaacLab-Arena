@@ -40,6 +40,16 @@ from isaaclab_arena.examples.example_environments.cli import (
     get_arena_builder_from_cli,
 )
 
+def _teleop_device_requires_xr(device_name: str | None) -> bool:
+    if not device_name:
+        return False
+    name = device_name.lower()
+    return any(token in name for token in ("handtracking", "openxr")) or name in {
+        "avp_handtracking",
+        "ex001arm_openxr_bimanual",
+    }
+
+
 # add argparse arguments
 parser = get_isaaclab_arena_cli_parser()
 parser.add_argument("--dataset_file", type=str, required=True, help="File path to export recorded demos.")
@@ -70,16 +80,17 @@ args_cli = parser.parse_args()
 
 app_launcher_args = vars(args_cli)
 
+if _teleop_device_requires_xr(args_cli.teleop_device):
+    app_launcher_args["xr"] = True
+    setattr(args_cli, "xr", True)
+
 if args_cli.enable_pinocchio:
     # Import pinocchio before AppLauncher to force the use of the version installed by IsaacLab and not the one installed by Isaac Sim
     # pinocchio is required by the Pink IK controllers and the GR1T2 retargeter
     import pinocchio  # noqa: F401
 
-    if "handtracking" in args_cli.teleop_device.lower():
-        app_launcher_args["xr"] = True
-
 # launch the simulator
-app_launcher = AppLauncher(args_cli)
+app_launcher = AppLauncher(app_launcher_args)
 simulation_app = app_launcher.app
 
 """Rest everything follows."""
@@ -97,7 +108,6 @@ import isaaclab_mimic.envs  # noqa: F401
 import omni.log
 import omni.ui as ui
 from isaaclab.devices import Se3Keyboard, Se3KeyboardCfg, Se3SpaceMouse, Se3SpaceMouseCfg
-from isaaclab.devices.openxr import remove_camera_configs
 from isaaclab.devices.teleop_device_factory import create_teleop_device
 from isaaclab_mimic.ui.instruction_display import InstructionDisplay, show_subtask_instructions
 
@@ -114,6 +124,27 @@ from isaaclab.envs.mdp.recorders.recorders_cfg import ActionStateRecorderManager
 from isaaclab.envs.ui import EmptyWindow
 from isaaclab.managers import DatasetExportMode
 
+
+def _remove_cameras_and_obs(env_cfg):
+    from isaaclab.managers import SceneEntityCfg
+    from isaaclab.sensors import CameraCfg
+
+    removed_names: set[str] = set()
+    for attr_name in dir(env_cfg.scene):
+        attr = getattr(env_cfg.scene, attr_name)
+        if isinstance(attr, CameraCfg):
+            delattr(env_cfg.scene, attr_name)
+            removed_names.add(attr_name)
+
+    if removed_names and hasattr(env_cfg.observations, "policy"):
+        for obs_name in dir(env_cfg.observations.policy):
+            obsterm = getattr(env_cfg.observations.policy, obs_name)
+            if hasattr(obsterm, "params") and obsterm.params:
+                for param_value in obsterm.params.values():
+                    if isinstance(param_value, SceneEntityCfg) and param_value.name in removed_names:
+                        delattr(env_cfg.observations.policy, obs_name)
+                        break
+    return env_cfg
 
 class RateLimiter:
     """Convenience class for enforcing rates in loops."""
@@ -214,7 +245,7 @@ def create_environment_config(
     if args_cli.xr:
         # If cameras are not enabled and XR is enabled, remove camera configs
         if not args_cli.enable_cameras:
-            env_cfg = remove_camera_configs(env_cfg)
+            env_cfg = _remove_cameras_and_obs(env_cfg)
         env_cfg.sim.render.antialiasing_mode = "DLSS"
 
     # modify configuration such that the environment runs indefinitely until
