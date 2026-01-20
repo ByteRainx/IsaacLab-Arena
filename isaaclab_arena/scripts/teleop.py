@@ -23,6 +23,7 @@ from isaaclab_arena.examples.example_environments.cli import (
     get_arena_builder_from_cli,
 )
 
+
 def _teleop_device_requires_xr(device_name: str | None) -> bool:
     if not device_name:
         return False
@@ -69,6 +70,11 @@ if not hasattr(args_cli, "task") or args_cli.task is None:
     args_cli.task = getattr(args_cli, "example_environment", None) or getattr(args_cli, "environment", "") or ""
 
 app_launcher_args = vars(args_cli)
+
+# Ensure render preset is explicit; 3DGS relies on translucency which is off in balanced/performance.
+if not hasattr(args_cli, "rendering_mode") or args_cli.rendering_mode is None:
+    args_cli.rendering_mode = "quality"
+    app_launcher_args["rendering_mode"] = "quality"
 
 # Enable XR independently of pinocchio when using OpenXR-based teleop.
 if _teleop_device_requires_xr(args_cli.teleop_device):
@@ -150,6 +156,12 @@ def main() -> None:
         if not getattr(args_cli, "enable_cameras", False):
             env_cfg = _remove_cameras_and_obs(env_cfg)
         env_cfg.sim.render.antialiasing_mode = "DLSS"
+        # 3DGS backgrounds rely on translucency; VR defaults favor performance and can hide splats.
+        if getattr(args_cli, "background", "") == "cvpr_assets":
+            env_cfg.sim.render.rendering_mode = "quality"
+            env_cfg.sim.render.enable_translucency = True
+            env_cfg.sim.render.enable_reflections = True
+            env_cfg.sim.render.enable_global_illumination = True
 
     try:
         # create environment
