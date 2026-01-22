@@ -116,7 +116,7 @@ class X2RobotClosedloopPolicy(PolicyBase):
         self.device = device
         
         self.client: Optional[SimpleWebSocketClient] = None
-        self._init_inference_client()
+        self._connected = False
         
         self.action_dim = 14
         
@@ -128,14 +128,20 @@ class X2RobotClosedloopPolicy(PolicyBase):
         self.env_requires_new_action_chunk = torch.ones(num_envs, dtype=torch.bool, device=device)
         self.current_action_index = torch.zeros(num_envs, dtype=torch.int32, device=device)
     
-    def _init_inference_client(self):
+    def _ensure_connected(self):
+        """Lazily connect to the inference server on first use."""
+        if self._connected:
+            return
+        
         address = self.config.model_address
         port = self.config.model_port
         uri = f"ws://{address}:{port}"
         
+        print(f"[X2RobotPolicy] Connecting to server at {uri}...")
         self.client = SimpleWebSocketClient(address, port)
         try:
             metadata = self.client.connect_sync()
+            self._connected = True
             print(f"[X2RobotPolicy] Connected to server at {uri}")
             if metadata:
                 print(f"[X2RobotPolicy] Server metadata: {metadata}")
@@ -178,6 +184,12 @@ class X2RobotClosedloopPolicy(PolicyBase):
         camera_left = get_camera_base64(self.config.camera_left)
         camera_right = get_camera_base64(self.config.camera_right)
         camera_front = get_camera_base64(self.config.camera_front)
+        
+        # If no front/head camera, create a black placeholder image
+        if camera_front is None:
+            h, w = self.config.target_image_size[:2]
+            black_image = np.zeros((h, w, 3), dtype=np.uint8)
+            camera_front = self._compress_image_to_base64(black_image)
         
         def to_numpy(x):
             if x is None:
@@ -227,8 +239,9 @@ class X2RobotClosedloopPolicy(PolicyBase):
         )
         
         x2robot_obs = {
-            "ACTION_FOLLOW1_POS": follow1_pos,
-            "ACTION_FOLLOW2_POS": follow2_pos,
+            # Convert numpy arrays to lists for msgpack serialization
+            "ACTION_FOLLOW1_POS": follow1_pos.tolist(),
+            "ACTION_FOLLOW2_POS": follow2_pos.tolist(),
             "instruction": self.config.instruction,
         }
         
@@ -288,6 +301,9 @@ class X2RobotClosedloopPolicy(PolicyBase):
         return action
     
     def _query_server(self, observation: Dict[str, Any]) -> torch.Tensor:
+        # Lazy connect on first query
+        self._ensure_connected()
+        
         x2robot_obs = self._collect_observations(observation)
         
         try:
@@ -321,9 +337,10 @@ class X2RobotClosedloopPolicy(PolicyBase):
         self.env_requires_new_action_chunk[env_ids] = True
     
     def close(self):
-        if self.client is not None:
+        if self.client is not None and self._connected:
             try:
                 self.client.close()
+                self._connected = False
                 print("[X2RobotPolicy] Connection closed")
             except Exception as e:
                 print(f"[X2RobotPolicy] Error closing: {e}")
