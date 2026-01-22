@@ -162,6 +162,11 @@ def main() -> None:
             env_cfg.sim.render.enable_translucency = True
             env_cfg.sim.render.enable_reflections = True
             env_cfg.sim.render.enable_global_illumination = True
+        # Force XR AR profile to use quality rendering (overrides persistent settings)
+        import carb
+        carb.settings.get_settings().set_string("/persistent/xr/profile/ar/renderQuality", "quality")
+        carb.settings.get_settings().set_string("/defaults/xr/profile/ar/renderQuality", "quality")
+        carb.settings.get_settings().set_bool("/rtx/translucency/enabled", True)
 
     try:
         # create environment
@@ -317,9 +322,31 @@ def main() -> None:
     elif hasattr(env, "action_space") and hasattr(env.action_space, "shape"):
         expected_action_dim = env.action_space.shape[-1]
 
+    # For 3DGS compatibility in XR mode: force translucency settings periodically
+    frame_counter = 0
+    force_3dgs_interval = 30  # Check every 30 frames
+
+    def force_3dgs_settings():
+        """Force rendering settings required for 3DGS in XR mode."""
+        import carb
+        settings = carb.settings.get_settings()
+        # Check if translucency is disabled and re-enable it
+        if not settings.get("/rtx/translucency/enabled"):
+            settings.set_bool("/rtx/translucency/enabled", True)
+            settings.set_bool("/rtx/reflections/enabled", True)
+            settings.set_bool("/rtx/indirectDiffuse/enabled", True)
+            carb.log_warn("3DGS: Re-enabled translucency (was disabled by XR profile)")
+
     # simulate environment
     while simulation_app.is_running():
         try:
+            # For XR mode: periodically check and force 3DGS rendering settings
+            if args_cli.xr and getattr(args_cli, "background", "") == "cvpr_assets":
+                frame_counter += 1
+                if frame_counter >= force_3dgs_interval:
+                    force_3dgs_settings()
+                    frame_counter = 0
+
             # run everything in inference mode
             with torch.inference_mode():
                 # get device command
