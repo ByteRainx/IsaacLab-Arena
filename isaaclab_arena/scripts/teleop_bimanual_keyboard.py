@@ -11,7 +11,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import gymnasium as gym
-import sys
 
 from isaaclab.app import AppLauncher
 
@@ -22,30 +21,6 @@ from isaaclab_arena.examples.example_environments.cli import (
 )
 
 # add argparse arguments
-
-
-def _move_flag_before_subcommand(flag: str) -> None:
-    if flag not in sys.argv:
-        return
-    flag_index = sys.argv.index(flag)
-    if flag_index + 1 >= len(sys.argv):
-        return
-    # Find subcommand (first non-flag argument after script name).
-    subcommand_index = None
-    for idx, arg in enumerate(sys.argv[1:], start=1):
-        if not arg.startswith("-"):
-            subcommand_index = idx
-            break
-    if subcommand_index is None or flag_index < subcommand_index:
-        return
-    flag_value = sys.argv[flag_index + 1]
-    del sys.argv[flag_index : flag_index + 2]
-    sys.argv[subcommand_index:subcommand_index] = [flag, flag_value]
-
-
-_move_flag_before_subcommand("--enable_cameras")
-_move_flag_before_subcommand("--task")
-
 parser = get_isaaclab_arena_cli_parser()
 parser.add_argument("--sensitivity", type=float, default=1.0, help="Sensitivity factor.")
 parser.add_argument(
