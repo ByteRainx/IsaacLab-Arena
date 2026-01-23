@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
 from isaaclab_arena.assets.background import Background
@@ -113,6 +114,30 @@ class GalileoLocomanipBackground(LibraryBackground):
     usd_path = f"{ISAACLAB_NUCLEUS_DIR}/Arena/assets/background_library/galileo_locomanip/galileo_locomanip.usd"
     initial_pose = Pose(position_xyz=(4.420, 1.408, -0.795), rotation_wxyz=(1.0, 0.0, 0.0, 0.0))
     object_min_z = -0.2
+
+    def __init__(self):
+        super().__init__()
+
+
+def _cvpr_assets_scene_path() -> str:
+    """
+    Resolve the cvpr_assets scene USD path.
+    """
+    arena_root = Path(__file__).resolve().parents[2]
+    cvpr_assets_path = arena_root / "cvpr_assets" / "scene-3dgs" / "scene_01.usd"
+    return cvpr_assets_path.as_posix()
+
+@register_asset
+class CvprBackground(LibraryBackground):
+    """
+    Encapsulates the background scene from cvpr_assets.
+    """
+
+    name = "cvpr_background"
+    tags = ["background"]
+    usd_path = _cvpr_assets_scene_path()
+    initial_pose = Pose(position_xyz=(0.0, 0.0, 0.0), rotation_wxyz=(1.0, 0.0, 0.0, 0.0))
+    object_min_z = -0.4
 
     def __init__(self):
         super().__init__()
