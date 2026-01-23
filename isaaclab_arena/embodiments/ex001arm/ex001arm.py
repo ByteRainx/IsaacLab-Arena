@@ -43,6 +43,7 @@ def _ex001arm_usd_path() -> str:
 _FLOAT_PATTERN = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$")
 _SPLIT_PATTERN = re.compile(r"[,\s]+")
 
+
 def _parse_env_tuple(env_value: str | None, expected_len: int) -> tuple[float, ...] | None:
     """Parse a comma/space separated list of floats from an env var."""
     if not env_value:
@@ -228,16 +229,16 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             # Left gripper actuator
             "left_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["left_arm_gripper"],
-                effort_limit_sim=10.0,
-                stiffness=0.4,
-                damping=2.0,
+                effort_limit_sim=50.0,
+                stiffness=50.0,
+                damping=5.0,
             ),
             # Right gripper actuator
             "right_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["right_arm_gripper"],
-                effort_limit_sim=10.0,
-                stiffness=0.4,
-                damping=2.0,
+                effort_limit_sim=50.0,
+                stiffness=50.0,
+                damping=5.0,
             ),
         },
     )
