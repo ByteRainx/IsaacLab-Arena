@@ -1,0 +1,351 @@
+# File produced by Open Asset Import Library (http://www.assimp.sf.net)
+# (assimp v5.4.4108939008)
+
+newmtl mat_5
+Kd 0.560779989 0.552940011 0.541180015
+illum 1
+
+newmtl mat_0_008
+Kd 0.247060001 0.247060001 0.247060001
+illum 1
+
+newmtl mat_4
+Kd 0.796079993 0.796079993 0.796079993
+illum 1
+
+newmtl mat_3_002
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl mat_1_008
+Kd 0.627449989 0.627449989 0.627449989
+illum 1
+
+newmtl mat_2_006
+Kd 0.956859887 0.956859887 0.960780025
+illum 1
+
+newmtl DefaultMaterial
+Kd 0.627451003 0.627451003 0.627451003
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl DefaultMaterial
+Kd 0.627451003 0.627451003 0.627451003
+illum 1
+
+newmtl mat_3
+Kd 0 0 0
+illum 1
+
+newmtl mat_0_001
+Kd 0.247060001 0.247060001 0.247060001
+illum 1
+
+newmtl mat_2
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl mat_1_001
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_2_001
+Kd 0.627449989 0.627449989 0.627449989
+illum 1
+
+newmtl mat_0_002
+Kd 0.247060001 0.247060001 0.247060001
+illum 1
+
+newmtl mat_1_002
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_2_002
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl mat_1_003
+Kd 0 0 0
+illum 1
+
+newmtl mat_0_003
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_2_003
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl mat_0_004
+Kd 0 0 0
+illum 1
+
+newmtl mat_1_004
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_2_004
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl mat_1_005
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl mat_0_005
+Kd 0 0 0
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_1_006
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl mat_0_006
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_3_001
+Kd 0.956859887 0.956859887 0.960780025
+illum 1
+
+newmtl mat_2_005
+Kd 0.168630004 0.168630004 0.168630004
+illum 1
+
+newmtl mat_1_007
+Kd 0.627449989 0.627449989 0.627449989
+illum 1
+
+newmtl mat_0_007
+Kd 0.796079993 0.796079993 0.796079993
+illum 1
+
+newmtl DefaultMaterial
+Kd 0.627451003 0.627451003 0.627451003
+illum 1
+
+newmtl mat_1_010
+Kd 0.168630004 0.168630004 0.168630004
+illum 1
+
+newmtl mat_0_010
+Kd 0.796079993 0.796079993 0.796079993
+illum 1
+
+newmtl DefaultMaterial
+Kd 0.627451003 0.627451003 0.627451003
+illum 1
+
+newmtl mat_0_009
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl mat_1_009
+Kd 0 0 0
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_0_009
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl mat_1_009
+Kd 0 0 0
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl DefaultMaterial
+Kd 0.627451003 0.627451003 0.627451003
+illum 1
+
+newmtl mat_3
+Kd 0 0 0
+illum 1
+
+newmtl mat_0_001
+Kd 0.247060001 0.247060001 0.247060001
+illum 1
+
+newmtl mat_2
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl mat_1_001
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_2_001
+Kd 0.627449989 0.627449989 0.627449989
+illum 1
+
+newmtl mat_0_002
+Kd 0.247060001 0.247060001 0.247060001
+illum 1
+
+newmtl mat_1_002
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_2_002
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl mat_1_003
+Kd 0 0 0
+illum 1
+
+newmtl mat_0_003
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_2_003
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl mat_0_004
+Kd 0 0 0
+illum 1
+
+newmtl mat_1_004
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_2_004
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl mat_1_005
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl mat_0_005
+Kd 0 0 0
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_1_006
+Kd 0.0941200033 0.0941200033 0.0941200033
+illum 1
+
+newmtl mat_0_006
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_3_001
+Kd 0.956859887 0.956859887 0.960780025
+illum 1
+
+newmtl mat_2_005
+Kd 0.168630004 0.168630004 0.168630004
+illum 1
+
+newmtl mat_1_007
+Kd 0.627449989 0.627449989 0.627449989
+illum 1
+
+newmtl mat_0_007
+Kd 0.796079993 0.796079993 0.796079993
+illum 1
+
+newmtl DefaultMaterial
+Kd 0.627451003 0.627451003 0.627451003
+illum 1
+
+newmtl mat_1_010
+Kd 0.168630004 0.168630004 0.168630004
+illum 1
+
+newmtl mat_0_010
+Kd 0.796079993 0.796079993 0.796079993
+illum 1
+
+newmtl DefaultMaterial
+Kd 0.627451003 0.627451003 0.627451003
+illum 1
+
+newmtl mat_0_009
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl mat_1_009
+Kd 0 0 0
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
+newmtl mat_0_009
+Kd 0.984309971 0.976469994 0.956859887
+illum 1
+
+newmtl mat_1_009
+Kd 0 0 0
+illum 1
+
+newmtl DefaultMaterial
+Kd 1 1 1
+illum 1
+
