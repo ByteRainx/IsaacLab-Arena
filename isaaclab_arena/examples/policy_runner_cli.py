@@ -83,6 +83,38 @@ def add_gr00t_closedloop_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_x2robot_closedloop_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add x2robot closedloop policy specific arguments to the parser."""
+    x2robot_group = parser.add_argument_group(
+        "X2Robot Closedloop Policy", "Arguments for x2robot closedloop policy"
+    )
+    x2robot_group.add_argument(
+        "--x2robot_server_address",
+        type=str,
+        default="localhost",
+        help="Address of the X2Robot inference server",
+    )
+    x2robot_group.add_argument(
+        "--x2robot_server_port",
+        type=int,
+        default=8000,
+        help="Port of the X2Robot inference server",
+    )
+    x2robot_group.add_argument(
+        "--x2robot_instruction",
+        type=str,
+        default="pick up the object",
+        help="Task instruction for the X2Robot model",
+    )
+    x2robot_group.add_argument(
+        "--x2robot_control_mode",
+        type=str,
+        choices=["end_pose", "joints"],
+        default="end_pose",
+        help="Control mode for X2Robot: 'end_pose' or 'joints'",
+    )
+
+
 def setup_policy_argument_parser(args_parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
     """Set up and configure the argument parser with all policy-related arguments."""
     # Get the base parser from IsaacLab Arena
@@ -91,9 +123,9 @@ def setup_policy_argument_parser(args_parser: argparse.ArgumentParser | None = N
     args_parser.add_argument(
         "--policy_type",
         type=str,
-        choices=["zero_action", "replay", "replay_lerobot", "gr00t_closedloop"],
+        choices=["zero_action", "replay", "replay_lerobot", "gr00t_closedloop", "x2robot_closedloop"],
         required=True,
-        help="Type of policy to use: 'zero_action' or 'replay' or 'replay_lerobot' or 'gr00t_closedloop'",
+        help="Type of policy to use: 'zero_action', 'replay', 'replay_lerobot', 'gr00t_closedloop', or 'x2robot_closedloop'",
     )
 
     # Add policy-specific argument groups
@@ -101,6 +133,7 @@ def setup_policy_argument_parser(args_parser: argparse.ArgumentParser | None = N
     add_replay_arguments(args_parser)
     add_replay_lerobot_arguments(args_parser)
     add_gr00t_closedloop_arguments(args_parser)
+    add_x2robot_closedloop_arguments(args_parser)
     parsed_args = args_parser.parse_args()
 
     if parsed_args.policy_type == "replay" and parsed_args.replay_file_path is None:
@@ -141,6 +174,21 @@ def create_policy(args: argparse.Namespace) -> tuple[PolicyBase, int]:
 
         policy = Gr00tClosedloopPolicy(args.policy_config_yaml_path, num_envs=args.num_envs, device=args.policy_device)
         num_steps = args.num_steps
+
+    elif args.policy_type == "x2robot_closedloop":
+        from isaaclab_arena.policy.x2robot_closedloop_policy import (
+            X2RobotClosedloopPolicy,
+            X2RobotPolicyConfig,
+        )
+
+        config = X2RobotPolicyConfig(
+            model_address=args.x2robot_server_address,
+            model_port=args.x2robot_server_port,
+            instruction=args.x2robot_instruction,
+            control_mode=args.x2robot_control_mode,
+        )
+        policy = X2RobotClosedloopPolicy(config, num_envs=args.num_envs, device=args.device)
+        num_steps = args.num_steps
     else:
-        raise ValueError(f"Unknown policy type: {args.type}")
+        raise ValueError(f"Unknown policy type: {args.policy_type}")
     return policy, num_steps
