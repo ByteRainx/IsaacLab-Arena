@@ -62,6 +62,9 @@ TAGS
 *demos/
 *videos/
 
+# OpenXR
+*openxr/
+
 # Training images
 *training_images/
 
