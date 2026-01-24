@@ -128,7 +128,7 @@ class Ex001ArmCvprScenePickAndPlaceEnvironment(ExampleEnvironmentBase):
 
     @staticmethod
     def add_cli_args(parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--background", type=str, default="cvpr_assets")
+        parser.add_argument("--background", type=str, default="cvpr_background")
         parser.add_argument("--object", type=str, default="cracker_box")
         parser.add_argument("--embodiment", type=str, default="ex001arm")
         parser.add_argument("--teleop_device", type=str, default=None)
