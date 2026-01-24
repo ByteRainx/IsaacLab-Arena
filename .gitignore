@@ -59,6 +59,8 @@ TAGS
 
 # outputs
 *outputs/
+*demos/
+*videos/
 
 # Training images
 *training_images/

@@ -28,9 +28,18 @@ class Ex001ArmKitchenPickAndPlaceEnvironment(ExampleEnvironmentBase):
 
         background = self.asset_registry.get_asset_by_name("kitchen")()
         pick_up_object = self.asset_registry.get_asset_by_name(args_cli.object)()
+        
+        # Robot base position (also used as VR anchor for hand tracking alignment)
+        robot_initial_pos = (-0.15242, 0.14933, -0.31697)
+        robot_initial_rot = (0.99998, 0.0, 0.0, -0.00648) # wxyz quaternion
+        
         embodiment = self.asset_registry.get_asset_by_name(
             args_cli.embodiment
-        )(enable_cameras=args_cli.enable_cameras)
+        )(
+            enable_cameras=args_cli.enable_cameras,
+            xr_anchor_pos=robot_initial_pos,
+            xr_anchor_rot=robot_initial_rot,
+        )
 
         if args_cli.teleop_device is not None:
             teleop_device = self.device_registry.get_device_by_name(
@@ -41,8 +50,8 @@ class Ex001ArmKitchenPickAndPlaceEnvironment(ExampleEnvironmentBase):
 
         embodiment.set_initial_pose(
             Pose(
-                position_xyz=(-0.15242, 0.14933, -0.31697),
-                rotation_wxyz=(0.99998, 0.0, 0.0, -0.00648),
+                position_xyz=robot_initial_pos,
+                rotation_wxyz=robot_initial_rot,
             )
         )
 

@@ -10,22 +10,25 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 """
-Script to record demonstrations with EX001Arm using bimanual keyboard control.
+Script to record demonstrations with EX001Arm using bimanual keyboard or VR control.
 
 This script allows users to record demonstrations with EX001Arm embodiment using
-bimanual keyboard teleoperation. The recorded demonstrations are stored as episodes
-in an hdf5 file. Cameras in the USD scene are always loaded, but image recording
-to HDF5 is optional.
+either bimanual keyboard teleoperation or VR hand tracking. The recorded demonstrations
+are stored as episodes in an hdf5 file. Cameras in the USD scene are always loaded,
+but image recording to HDF5 is optional.
 
 required arguments:
     --dataset_file            File path to export recorded demos.
 
 optional arguments:
     -h, --help                Show this help message and exit
-    --step_hz                 Environment stepping rate in Hz. (default: 30)
+    --step_hz                 Environment stepping rate in Hz. (default: 30, only for keyboard)
     --num_demos               Number of demonstrations to record. (default: 1, set to 0 for infinite)
-    --sensitivity             Keyboard sensitivity multiplier. (default: 1.0)
+    --sensitivity             Keyboard sensitivity multiplier. (default: 1.0, only for keyboard)
     --record_images           Record camera images to HDF5. (default: False, saves disk space)
+
+Note: The --teleop_device argument is defined by the environment subparser.
+      Use 'keyboard' for bimanual keyboard control or 'ex001arm_openxr_bimanual' for VR.
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -44,6 +47,18 @@ from isaaclab_arena.examples.example_environments.cli import (
     get_arena_builder_from_cli,
 )
 
+
+def _teleop_device_requires_xr(device_name: str | None) -> bool:
+    """Check if teleop device requires XR to be enabled."""
+    if not device_name:
+        return False
+    name = device_name.lower()
+    return any(token in name for token in ("handtracking", "openxr")) or name in {
+        "avp_handtracking",
+        "ex001arm_openxr_bimanual",
+    }
+
+
 # add argparse arguments
 parser = get_isaaclab_arena_cli_parser()
 parser.add_argument("--dataset_file", type=str, required=True, help="File path to export recorded demos.")
@@ -55,7 +70,7 @@ parser.add_argument(
     "--sensitivity",
     type=float,
     default=1.0,
-    help="Keyboard sensitivity multiplier.",
+    help="Keyboard sensitivity multiplier (only for keyboard control).",
 )
 parser.add_argument(
     "--record_images",
@@ -78,6 +93,12 @@ args_cli = parser.parse_args()
 
 app_launcher_args = vars(args_cli)
 
+# Auto-enable XR for VR devices
+device_name = getattr(args_cli, "teleop_device", None)
+if _teleop_device_requires_xr(device_name):
+    app_launcher_args["xr"] = True
+    setattr(args_cli, "xr", True)
+
 if args_cli.enable_pinocchio:
     import pinocchio  # noqa: F401
 
@@ -98,6 +119,7 @@ from scipy.spatial.transform import Rotation
 import carb
 import omni
 import omni.log
+from isaaclab.devices.teleop_device_factory import create_teleop_device
 from isaaclab.envs.mdp.recorders.recorders_cfg import ActionStateRecorderManagerCfg
 from isaaclab.managers import DatasetExportMode
 from isaaclab.managers.recorder_manager import RecorderTerm, RecorderTermCfg
@@ -399,13 +421,14 @@ def setup_output_directories() -> tuple[str, str]:
     return output_dir, output_file_name
 
 
-def create_environment() -> tuple[gym.Env, int]:
+def create_environment() -> tuple[gym.Env, int, object]:
     """Create and configure the environment for recording.
 
     Returns:
-        tuple[gym.Env, int]: A tuple containing:
+        tuple[gym.Env, int, object]: A tuple containing:
             - env: The configured environment
             - expected_action_dim: Expected action dimension
+            - env_cfg: Environment configuration (needed for VR teleop)
     """
     # parse configuration
     try:
@@ -449,27 +472,57 @@ def create_environment() -> tuple[gym.Env, int]:
         exit(1)
 
     expected_action_dim = _get_expected_action_dim(env) or env.action_space.shape[-1]
-    return env, expected_action_dim
+    return env, expected_action_dim, env_cfg
+
+
+def create_teleop_interface(env, env_cfg) -> object:
+    """Create teleop interface based on device type."""
+    device_name = getattr(args_cli, "teleop_device", "keyboard") or "keyboard"
+    
+    if _teleop_device_requires_xr(device_name):
+        # VR device - use factory
+        teleop_callbacks = {}
+        if hasattr(env_cfg, "teleop_devices") and device_name in env_cfg.teleop_devices.devices:
+            teleop_interface = create_teleop_device(
+                device_name, 
+                env_cfg.teleop_devices.devices,
+                teleop_callbacks
+            )
+            print(f"[INFO] Using VR teleop device: {device_name}")
+        else:
+            omni.log.error(f"VR device '{device_name}' not found in environment config")
+            exit(1)
+        return teleop_interface
+    else:
+        # Keyboard device
+        sensitivity = float(args_cli.sensitivity)
+        teleop_interface = BimanualSe3Keyboard(
+            BimanualSe3KeyboardCfg(
+                pos_sensitivity=0.05 * sensitivity,
+                rot_sensitivity=0.05 * sensitivity,
+                sim_device=env.device,
+            )
+        )
+        print("[INFO] Using keyboard teleop device")
+        return teleop_interface
 
 
 def main() -> None:
-    """Main function to record demonstrations with bimanual keyboard control."""
+    """Main function to record demonstrations with bimanual keyboard or VR control."""
     # Create environment
-    env, expected_action_dim = create_environment()
+    env, expected_action_dim, env_cfg = create_environment()
 
-    # Set up teleoperation interface
-    sensitivity = float(args_cli.sensitivity)
-    teleop_interface = BimanualSe3Keyboard(
-        BimanualSe3KeyboardCfg(
-            pos_sensitivity=0.05 * sensitivity,
-            rot_sensitivity=0.05 * sensitivity,
-            sim_device=env.device,
-        )
-    )
+    # Set up teleoperation interface (keyboard or VR)
+    teleop_interface = create_teleop_interface(env, env_cfg)
 
     # State variables
     should_reset = False
     recorded_demos = 0
+    device_name = getattr(args_cli, "teleop_device", None)
+    is_vr = _teleop_device_requires_xr(device_name)
+    
+    # For VR: wait for START button. For keyboard: start immediately
+    running_recording = not is_vr
 
     def reset_and_export() -> None:
         """Export current demo and reset environment."""
@@ -477,28 +530,50 @@ def main() -> None:
         env.recorder_manager.record_pre_reset([0], force_export_or_skip=False)
         env.recorder_manager.export_episodes([0])
         env.recorder_manager.reset([0])
+        env.sim.reset()
         env.reset()
+        teleop_interface.reset()
         recorded_demos += 1
-        print(f"[{recorded_demos}/{args_cli.num_demos if args_cli.num_demos > 0 else '∞'}] Demo exported")
+        print(f"[{recorded_demos}/{args_cli.num_demos if args_cli.num_demos > 0 else '∞'}] Demo exported and environment reset")
 
     def request_reset() -> None:
         """Request reset on next loop iteration."""
         nonlocal should_reset
         should_reset = True
 
-    # Add reset callback
-    teleop_interface.add_callback("R", request_reset)
+    def start_recording() -> None:
+        """Start recording (for VR control)."""
+        nonlocal running_recording
+        running_recording = True
+        print("[INFO] Recording started")
 
-    # Set up rate limiter
-    rate_limiter = RateLimiter(args_cli.step_hz)
+    def stop_recording() -> None:
+        """Stop recording (for VR control)."""
+        nonlocal running_recording
+        running_recording = False
+        print("[INFO] Recording paused")
+
+    # Add callbacks
+    teleop_interface.add_callback("R", request_reset)
+    teleop_interface.add_callback("RESET", request_reset)
+    teleop_interface.add_callback("START", start_recording)
+    teleop_interface.add_callback("STOP", stop_recording)
+
+    # Set up rate limiter (not needed for VR devices)
+    rate_limiter = None if is_vr else RateLimiter(args_cli.step_hz)
 
     # Reset before starting
     env.sim.reset()
     env.reset()
     teleop_interface.reset()
 
-    print(f"Using teleop device:\n{teleop_interface}")
+    # Print control instructions
+    if not is_vr:
+        print(f"Using teleop device:\n{teleop_interface}")
     print("=" * 60)
+    if is_vr:
+        print("VR Mode: Click START button in VR to begin recording")
+        print("         Click STOP to pause, RESET to discard and restart")
     print("Press 'R' to export current demo and reset for next recording.")
     print(f"Target: {args_cli.num_demos if args_cli.num_demos > 0 else '∞ (infinite)'} demonstrations")
     print("=" * 60)
@@ -510,8 +585,12 @@ def main() -> None:
             action = teleop_interface.advance()
             device_action = _map_action_dim(action, expected_action_dim)
 
-            # Step environment
-            env.step(device_action.repeat(env.num_envs, 1))
+            # Step environment only if recording is active
+            if running_recording:
+                env.step(device_action.repeat(env.num_envs, 1))
+            else:
+                # Just render if not recording (VR waiting for START)
+                env.sim.render()
 
             # Handle reset request
             if should_reset:
@@ -527,8 +606,9 @@ def main() -> None:
             if env.sim.is_stopped():
                 break
 
-            # Rate limiting
-            rate_limiter.sleep(env)
+            # Rate limiting (only for keyboard mode)
+            if rate_limiter:
+                rate_limiter.sleep(env)
 
     # Clean up
     env.close()
