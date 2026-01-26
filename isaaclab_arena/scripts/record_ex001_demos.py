@@ -182,7 +182,7 @@ class ArenaEnvRecorderManagerCfg(ActionStateRecorderManagerCfg):
 @dataclass
 class BimanualSe3KeyboardCfg:
     pos_sensitivity: float = 0.05
-    rot_sensitivity: float = 0.05
+    rot_sensitivity: float = 0.5 
     sim_device: str | None = None
 
 
@@ -496,10 +496,11 @@ def create_teleop_interface(env, env_cfg) -> object:
     else:
         # Keyboard device
         sensitivity = float(args_cli.sensitivity)
+        cfg = BimanualSe3KeyboardCfg()
         teleop_interface = BimanualSe3Keyboard(
             BimanualSe3KeyboardCfg(
-                pos_sensitivity=0.05 * sensitivity,
-                rot_sensitivity=0.05 * sensitivity,
+                pos_sensitivity=cfg.pos_sensitivity * sensitivity,
+                rot_sensitivity=cfg.rot_sensitivity * sensitivity,
                 sim_device=env.device,
             )
         )

@@ -124,7 +124,7 @@ def _cvpr_assets_scene_path() -> str:
     Resolve the cvpr_assets scene USD path.
     """
     arena_root = Path(__file__).resolve().parents[2]
-    cvpr_assets_path = arena_root / "cvpr_assets" / "scene-3dgs" / "scene_01.usd"
+    cvpr_assets_path = arena_root / "assets" / "scene-3dgs" / "scene_01.usd"
     return cvpr_assets_path.as_posix()
 
 @register_asset

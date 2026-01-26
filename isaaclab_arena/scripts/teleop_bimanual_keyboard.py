@@ -70,7 +70,7 @@ import omni
 @dataclass
 class BimanualSe3KeyboardCfg:
     pos_sensitivity: float = 0.05
-    rot_sensitivity: float = 0.05
+    rot_sensitivity: float = 0.5 
     sim_device: str | None = None
 
 
@@ -296,8 +296,12 @@ def main() -> None:
     }
 
     sensitivity = float(args_cli.sensitivity)
+    cfg = BimanualSe3KeyboardCfg()
     teleop_interface = BimanualSe3Keyboard(
-        BimanualSe3KeyboardCfg(pos_sensitivity=0.05 * sensitivity, rot_sensitivity=0.05 * sensitivity)
+        BimanualSe3KeyboardCfg(
+            pos_sensitivity=cfg.pos_sensitivity * sensitivity,
+            rot_sensitivity=cfg.rot_sensitivity * sensitivity
+        )
     )
     for key, callback in teleoperation_callbacks.items():
         teleop_interface.add_callback(key, callback)

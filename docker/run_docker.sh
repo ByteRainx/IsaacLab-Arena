@@ -135,6 +135,7 @@ else
                     "--net=host"
                     "--runtime=nvidia"
                     "--gpus=all"
+                    "-v" "./assets:${WORKDIR}/assets"
                     "-v" "./docs:${WORKDIR}/docs"
                     "-v" "./isaaclab_arena:${WORKDIR}/isaaclab_arena"
                     "-v" "./isaaclab_arena_g1:${WORKDIR}/isaaclab_arena_g1"

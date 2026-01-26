@@ -36,7 +36,7 @@ def _ex001arm_usd_path() -> str:
     Resolve the ex001Arm USD path.
     """
     arena_root = Path(__file__).resolve().parents[3]
-    cvpr_assets_path = arena_root / "cvpr_assets" / "ex001_arm.usd"
+    cvpr_assets_path = arena_root / "assets" / "ex001arm_bimanual" / "ex001_arm.usd"
     return cvpr_assets_path.as_posix()
 
 
