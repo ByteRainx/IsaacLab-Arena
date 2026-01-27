@@ -123,47 +123,47 @@ class EX001ArmSceneCfg:
 
     # Left-arm end-effector frame transformer
     ee_frame: FrameTransformerCfg = FrameTransformerCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/left_arm_link6",
+        prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_base_link",
         debug_vis=False,
         target_frames=[
             FrameTransformerCfg.FrameCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_base_link",
                 name="end_effector",
-                offset=OffsetCfg(pos=[0.0, 0.0, 0.1034]),
+                offset=OffsetCfg(pos=[0.154, 0.0, 0.0]),
             ),
-            FrameTransformerCfg.FrameCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_left_link",
-                name="tool_leftfinger",
-                offset=OffsetCfg(pos=(0.0, 0.0, 0.046)),
-            ),
-            FrameTransformerCfg.FrameCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_right_link",
-                name="tool_rightfinger",
-                offset=OffsetCfg(pos=(0.0, 0.0, 0.046)),
-            ),
+            # FrameTransformerCfg.FrameCfg(
+            #     prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_left_link",
+            #     name="tool_leftfinger",
+            #     offset=OffsetCfg(pos=(0.0, 0.0, 0.046)),
+            # ),
+            # FrameTransformerCfg.FrameCfg(
+            #     prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_right_link",
+            #     name="tool_rightfinger",
+            #     offset=OffsetCfg(pos=(0.0, 0.0, 0.046)),
+            # ),
         ],
     )
 
     # Right-arm end-effector frame transformer
     right_ee_frame: FrameTransformerCfg = FrameTransformerCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/right_arm_link6",
+        prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_base_link",
         debug_vis=False,
         target_frames=[
             FrameTransformerCfg.FrameCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_base_link",
                 name="right_end_effector",
-                offset=OffsetCfg(pos=[0.0, 0.0, 0.1034]),
+                offset=OffsetCfg(pos=[0.154, 0.0, 0.0]),
             ),
-            FrameTransformerCfg.FrameCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_left_link",
-                name="right_tool_leftfinger",
-                offset=OffsetCfg(pos=(0.0, 0.0, 0.046)),
-            ),
-            FrameTransformerCfg.FrameCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_right_link",
-                name="right_tool_rightfinger",
-                offset=OffsetCfg(pos=(0.0, 0.0, 0.046)),
-            ),
+            # FrameTransformerCfg.FrameCfg(
+            #     prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_left_link",
+            #     name="right_tool_leftfinger",
+            #     offset=OffsetCfg(pos=(0.0, 0.0, 0.046)),
+            # ),
+            # FrameTransformerCfg.FrameCfg(
+            #     prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_right_link",
+            #     name="right_tool_rightfinger",
+            #     offset=OffsetCfg(pos=(0.0, 0.0, 0.046)),
+            # ),
         ],
     )
 
@@ -199,15 +199,13 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
-                max_depenetration_velocity=5.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=False,
+                enabled_self_collisions=True,
                 fix_root_link=True,
                 solver_position_iteration_count=32,
                 solver_velocity_iteration_count=16,
             ),
-            collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(-0.51676, -0.25918, -0.58061),
@@ -253,6 +251,7 @@ class EX001ArmActionsCfg:
         asset_name="robot",
         joint_names=["left_arm_joint[1-6]"],
         body_name="left_arm_gripper_base_link",
+        body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.154, 0.0, 0.0]),
         controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=True, ik_method="dls"),
         scale=0.5,
     )
@@ -270,6 +269,7 @@ class EX001ArmActionsCfg:
         asset_name="robot",
         joint_names=["right_arm_joint[1-6]"],
         body_name="right_arm_gripper_base_link",
+        body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.154, 0.0, 0.0]),
         controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=True, ik_method="dls"),
         scale=0.5,
     )
