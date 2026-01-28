@@ -3,6 +3,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+
+from isaaclab.assets import RigidObjectCfg
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
 from isaaclab_arena.affordances.openable import Openable
@@ -227,6 +230,30 @@ class BrownBox(LibraryObject):
     usd_path = f"{ISAACLAB_NUCLEUS_DIR}/Arena/assets/object_library/brown_box/brown_box.usd"
     default_prim_path = "{ENV_REGEX_NS}/brown_box"
     scale = (1.0, 1.0, 1.0)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+def _get_assets_root() -> str:
+    """
+    Resolve the assets directory path.
+    """
+    arena_root = Path(__file__).resolve().parents[2]
+    assets_path = arena_root / "assets"
+    return str(assets_path)
+
+
+@register_asset
+class Ball(LibraryObject):
+    """
+    A ball from hunyuan assets.
+    """
+
+    name = "ball"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/ball/ball_physics.usd"
+    scale = (0.0005, 0.0005, 0.0005)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)

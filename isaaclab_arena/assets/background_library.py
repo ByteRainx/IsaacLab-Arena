@@ -119,13 +119,14 @@ class GalileoLocomanipBackground(LibraryBackground):
         super().__init__()
 
 
-def _cvpr_assets_scene_path() -> str:
+def _get_assets_root() -> str:
     """
-    Resolve the cvpr_assets scene USD path.
+    Resolve the assets directory path.
     """
     arena_root = Path(__file__).resolve().parents[2]
-    cvpr_assets_path = arena_root / "assets" / "scene-3dgs" / "scene_01.usd"
-    return cvpr_assets_path.as_posix()
+    assets_path = arena_root / "assets"
+    return assets_path.as_posix()
+
 
 @register_asset
 class CvprBackground(LibraryBackground):
@@ -135,7 +136,7 @@ class CvprBackground(LibraryBackground):
 
     name = "cvpr_background"
     tags = ["background"]
-    usd_path = _cvpr_assets_scene_path()
+    usd_path = f"{_get_assets_root()}/scene-3dgs/scene_01.usd"
     initial_pose = Pose(position_xyz=(0.0, 0.0, 0.0), rotation_wxyz=(1.0, 0.0, 0.0, 0.0))
     object_min_z = -0.4
 

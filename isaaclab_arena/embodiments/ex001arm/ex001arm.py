@@ -201,7 +201,7 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
                 disable_gravity=True,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True,
+                enabled_self_collisions=False,
                 fix_root_link=True,
                 solver_position_iteration_count=32,
                 solver_velocity_iteration_count=16,
@@ -227,16 +227,16 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             # Left gripper actuator
             "left_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["left_arm_gripper"],
-                effort_limit_sim=50.0,
-                stiffness=50.0,
-                damping=5.0,
+                effort_limit_sim=40.0,
+                stiffness=20.0,
+                damping=10.0,
             ),
             # Right gripper actuator
             "right_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["right_arm_gripper"],
-                effort_limit_sim=50.0,
-                stiffness=50.0,
-                damping=5.0,
+                effort_limit_sim=40.0,
+                stiffness=20.0,
+                damping=10.0,
             ),
         },
     )
@@ -251,7 +251,6 @@ class EX001ArmActionsCfg:
         asset_name="robot",
         joint_names=["left_arm_joint[1-6]"],
         body_name="left_arm_gripper_base_link",
-        body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.154, 0.0, 0.0]),
         controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=True, ik_method="dls"),
         scale=0.5,
     )
@@ -261,7 +260,7 @@ class EX001ArmActionsCfg:
         asset_name="robot",
         joint_names=["left_arm_gripper"],
         open_command_expr={"left_arm_gripper": 5.0},
-        close_command_expr={"left_arm_gripper": 0.0},
+        close_command_expr={"left_arm_gripper": 2.5},
     )
 
     # Right arm IK action
@@ -269,7 +268,6 @@ class EX001ArmActionsCfg:
         asset_name="robot",
         joint_names=["right_arm_joint[1-6]"],
         body_name="right_arm_gripper_base_link",
-        body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.154, 0.0, 0.0]),
         controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=True, ik_method="dls"),
         scale=0.5,
     )
@@ -279,7 +277,7 @@ class EX001ArmActionsCfg:
         asset_name="robot",
         joint_names=["right_arm_gripper"],
         open_command_expr={"right_arm_gripper": 5.0},
-        close_command_expr={"right_arm_gripper": 0.0},
+        close_command_expr={"right_arm_gripper": 2.5},
     )
 
 
