@@ -257,3 +257,59 @@ class Ball(LibraryObject):
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+@register_asset
+class Bowl(LibraryObject):
+    """
+    A bowl from hunyuan assets.
+    """
+
+    name = "bowl"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/black/black_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+@register_asset
+class Bottom(LibraryObject):
+    """
+    A bottom from hunyuan assets.
+    """
+
+    name = "bottom"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/bottom/bottom_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+@register_asset
+class GreenBrick(LibraryObject):
+    """
+    A green brick from hunyuan assets.
+    """
+
+    name = "green_brick"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/green_brick/green_brick_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+@register_asset
+class Plate(LibraryObject):
+    """
+    A plate from hunyuan assets.
+    """
+
+    name = "plate"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/plate/plate_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
