@@ -5,7 +5,6 @@
 
 from pathlib import Path
 
-from isaaclab.assets import RigidObjectCfg
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
 from isaaclab_arena.affordances.openable import Openable
@@ -258,19 +257,21 @@ class Ball(LibraryObject):
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
 
+
 @register_asset
-class Bowl(LibraryObject):
+class BlackBowl(LibraryObject):
     """
-    A bowl from hunyuan assets.
+    A black bowl from hunyuan assets.
     """
 
-    name = "bowl"
+    name = "black_bowl"
     tags = ["object"]
-    usd_path = f"{_get_assets_root()}/hunyuan_assets/black/black_physics.usd"
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/black_bowl/black_physics.usd"
     scale = (0.001, 0.001, 0.001)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
 
 @register_asset
 class Bottom(LibraryObject):
@@ -286,6 +287,7 @@ class Bottom(LibraryObject):
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
 
+
 @register_asset
 class GreenBrick(LibraryObject):
     """
@@ -300,6 +302,7 @@ class GreenBrick(LibraryObject):
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
 
+
 @register_asset
 class Plate(LibraryObject):
     """
@@ -310,6 +313,126 @@ class Plate(LibraryObject):
     tags = ["object"]
     usd_path = f"{_get_assets_root()}/hunyuan_assets/plate/plate_physics.usd"
     scale = (0.004, 0.004, 0.004)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
+class GreenPaper(LibraryObject):
+    """
+    A green paper from hunyuan assets.
+    """
+
+    name = "green_paper"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/green_paper/green_paper_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
+class PinkPaper(LibraryObject):
+    """
+    A pink paper from hunyuan assets.
+    """
+
+    name = "pink_paper"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/pink_paper/pink_paper_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
+class YellowPaper(LibraryObject):
+    """
+    A yellow paper from hunyuan assets.
+    """
+
+    name = "yellow_paper"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/yellow_paper/yellow_paper_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
+class Stick(LibraryObject):
+    """
+    A stick from hunyuan assets.
+    """
+
+    name = "stick"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/stick/stick_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
+class WhiteBowl(LibraryObject):
+    """
+    A white bowl from hunyuan assets.
+    """
+
+    name = "white_bowl"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/white_bowl/white_bowl_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
+class Wood(LibraryObject):
+    """
+    A wood piece from hunyuan assets.
+    """
+
+    name = "wood"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/wood/wood_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
+class WoodBottom(LibraryObject):
+    """
+    A wood bottom from hunyuan assets.
+    """
+
+    name = "wood_bottom"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/wood_bottom/wood_bottom_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
+class YellowBrick(LibraryObject):
+    """
+    A yellow brick from hunyuan assets.
+    """
+
+    name = "yellow_brick"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/yellow_brick/yellow_brick_physics.usd"
+    scale = (0.0008, 0.0008, 0.0008)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
