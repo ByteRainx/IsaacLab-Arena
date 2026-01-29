@@ -74,6 +74,8 @@ class Ex001ArmOpenXRBimanualTeleopDevice(TeleopDeviceBase):
         return GripperRetargeterCfg(bound_hand=bound_hand, sim_device=self.sim_device or "cpu")
 
     def get_teleop_device_cfg(self, embodiment: object | None = None):
+        # Get XR config from embodiment for anchor position/rotation
+        xr_cfg = embodiment.get_xr_cfg() if embodiment is not None else None
         return DevicesCfg(
             devices={
                 self.name: OpenXRDeviceCfg(
@@ -84,6 +86,7 @@ class Ex001ArmOpenXRBimanualTeleopDevice(TeleopDeviceBase):
                         self._make_gripper_cfg(OpenXRDevice.TrackingTarget.HAND_RIGHT),
                     ],
                     sim_device=self.sim_device,
+                    xr_cfg=xr_cfg,
                 ),
             }
         )

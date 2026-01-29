@@ -81,8 +81,6 @@ class Ex001ArmCvprScenePickAndPlaceEnvironment(ExampleEnvironmentBase):
                     env_cfg.wait_for_textures = True
                 if hasattr(env_cfg, "sim") and hasattr(env_cfg.sim, "render_interval"):
                     env_cfg.sim.render_interval = 1
-                if hasattr(env_cfg, "decimation"):
-                    env_cfg.decimation = 1
 
                 # Add distant light to the scene.
                 env_cfg.scene.distant_light = AssetBaseCfg(
@@ -96,22 +94,45 @@ class Ex001ArmCvprScenePickAndPlaceEnvironment(ExampleEnvironmentBase):
                 return env_cfg
 
         background = self.asset_registry.get_asset_by_name(args_cli.background)()
+        # Set background initial pose (position and rotation)
+        background.set_initial_pose(
+            Pose(
+                position_xyz=(-1.0, -0.562, 0.0),
+                rotation_wxyz=(0.04457, 0.0, 0.0, -0.999),
+            )
+        )
         pick_up_object = self.asset_registry.get_asset_by_name(args_cli.object)()
-        embodiment = self.asset_registry.get_asset_by_name(args_cli.embodiment)(enable_cameras=args_cli.enable_cameras)
+
+        # Robot initial pose
+        robot_initial_pos = (-0.51676, -0.25918, -0.58061)
+        robot_initial_rot = (1.0, 0.0, 0.0, 0.0)  # wxyz quaternion - no rotation for correct VR orientation
+
+        embodiment = self.asset_registry.get_asset_by_name(args_cli.embodiment)(
+            enable_cameras=args_cli.enable_cameras,
+            xr_anchor_pos=robot_initial_pos,
+            xr_anchor_rot=robot_initial_rot,
+        )
         teleop_device = (
             self.device_registry.get_device_by_name(args_cli.teleop_device)() if args_cli.teleop_device else None
         )
 
+        embodiment.set_initial_pose(
+            Pose(
+                position_xyz=robot_initial_pos,
+                rotation_wxyz=robot_initial_rot,
+            )
+        )
+
         pick_up_object.set_initial_pose(
             Pose(
-                position_xyz=tuple(args_cli.object_xyz),
+                position_xyz=(0.3, 0.0, -0.2),
                 rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
             )
         )
 
         destination_location = _DestinationMarker(
             initial_pose=Pose(
-                position_xyz=tuple(args_cli.destination_xyz),
+                position_xyz=(0.312, -0.286, -0.232),
                 rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
             )
         )
@@ -132,17 +153,3 @@ class Ex001ArmCvprScenePickAndPlaceEnvironment(ExampleEnvironmentBase):
         parser.add_argument("--object", type=str, default="cracker_box")
         parser.add_argument("--embodiment", type=str, default="ex001arm")
         parser.add_argument("--teleop_device", type=str, default=None)
-        parser.add_argument(
-            "--object_xyz",
-            type=float,
-            nargs=3,
-            default=(-1.41099, -0.17982, -0.10477),
-            help="Initial XYZ of the pick-up object in the background frame.",
-        )
-        parser.add_argument(
-            "--destination_xyz",
-            type=float,
-            nargs=3,
-            default=(0.9, 0.0, 0.05),
-            help="Initial XYZ of the destination marker in the background frame.",
-        )
