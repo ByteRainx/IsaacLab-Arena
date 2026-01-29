@@ -295,7 +295,7 @@ class GreenBrick(LibraryObject):
     name = "green_brick"
     tags = ["object"]
     usd_path = f"{_get_assets_root()}/hunyuan_assets/green_brick/green_brick_physics.usd"
-    scale = (0.001, 0.001, 0.001)
+    scale = (0.0008, 0.0008, 0.0008)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
@@ -309,7 +309,7 @@ class Plate(LibraryObject):
     name = "plate"
     tags = ["object"]
     usd_path = f"{_get_assets_root()}/hunyuan_assets/plate/plate_physics.usd"
-    scale = (0.001, 0.001, 0.001)
+    scale = (0.004, 0.004, 0.004)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)

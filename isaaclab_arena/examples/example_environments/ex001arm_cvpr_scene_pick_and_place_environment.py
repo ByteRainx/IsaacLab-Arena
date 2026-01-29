@@ -18,60 +18,13 @@ class Ex001ArmCvprScenePickAndPlaceEnvironment(ExampleEnvironmentBase):
     def get_env(self, args_cli: argparse.Namespace):  # -> IsaacLabArenaEnvironment:
         # NOTE: This method is called after the simulation app is started.
         # Avoid importing IsaacLab modules that depend on Kit/Omni at module import time.
-        import isaaclab.sim as sim_utils
-        from isaaclab.assets import AssetBaseCfg, ArticulationCfg, RigidObjectCfg
+        from isaaclab.assets import AssetBaseCfg
         from isaaclab.sim.spawners.lights import DistantLightCfg
 
-        from isaaclab_arena.assets.object_base import ObjectBase, ObjectType
         from isaaclab_arena.environments.isaaclab_arena_environment import IsaacLabArenaEnvironment
         from isaaclab_arena.scene.scene import Scene
         from isaaclab_arena.tasks.pick_and_place_task import PickAndPlaceTask
         from isaaclab_arena.utils.pose import Pose
-
-        class _DestinationMarker(ObjectBase):
-            """A simple static cuboid used as a pick-and-place goal location."""
-
-            def __init__(
-                self,
-                name: str = "destination_location",
-                prim_path: str | None = None,
-                initial_pose: Pose | None = None,
-                size_xyz: tuple[float, float, float] = (0.10, 0.10, 0.02),
-            ):
-                super().__init__(name=name, prim_path=prim_path, object_type=ObjectType.RIGID, tags=["object"])
-                self.initial_pose = initial_pose or Pose(
-                    position_xyz=(0.9, 0.0, 0.05),
-                    rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
-                )
-                self.size_xyz = size_xyz
-                self.object_cfg = self._init_object_cfg()
-
-            def set_initial_pose(self, pose: Pose) -> None:
-                self.initial_pose = pose
-                self.object_cfg = self._init_object_cfg()
-
-            def get_initial_pose(self) -> Pose | None:
-                return self.initial_pose
-
-            def _generate_rigid_cfg(self) -> RigidObjectCfg:
-                object_cfg = RigidObjectCfg(
-                    prim_path=self.prim_path,
-                    spawn=sim_utils.CuboidCfg(
-                        size=self.size_xyz,
-                        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True, disable_gravity=True),
-                        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
-                        activate_contact_sensors=False,
-                    ),
-                )
-                object_cfg.init_state.pos = self.initial_pose.position_xyz
-                object_cfg.init_state.rot = self.initial_pose.rotation_wxyz
-                return object_cfg
-
-            def _generate_articulation_cfg(self) -> ArticulationCfg:
-                raise NotImplementedError
-
-            def _generate_base_cfg(self) -> AssetBaseCfg:
-                raise NotImplementedError
 
         class _CvprScenePickAndPlaceTask(PickAndPlaceTask):
             """Pick-and-place task with render knobs for heavy 3DGS backgrounds."""
@@ -130,10 +83,11 @@ class Ex001ArmCvprScenePickAndPlaceEnvironment(ExampleEnvironmentBase):
             )
         )
 
-        destination_location = _DestinationMarker(
-            initial_pose=Pose(
+        destination_location = self.asset_registry.get_asset_by_name("plate")()
+        destination_location.set_initial_pose(
+            Pose(
                 position_xyz=(0.312, -0.286, -0.232),
-                rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
+                rotation_wxyz=(0.0, 0.0, 1.0, 0.0),
             )
         )
 

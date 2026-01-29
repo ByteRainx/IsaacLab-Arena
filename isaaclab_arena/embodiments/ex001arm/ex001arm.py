@@ -260,7 +260,7 @@ class EX001ArmActionsCfg:
         asset_name="robot",
         joint_names=["left_arm_gripper"],
         open_command_expr={"left_arm_gripper": 5.0},
-        close_command_expr={"left_arm_gripper": 4.0},
+        close_command_expr={"left_arm_gripper": 3.0},
     )
 
     # Right arm IK action
