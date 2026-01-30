@@ -3,5 +3,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from .actions import *
 from .ex001arm import *
 

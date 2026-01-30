@@ -107,8 +107,8 @@ class BimanualSe3Keyboard:
 
         self._additional_callbacks: dict[str, Callable[[], None]] = {}
 
-        self._left_close_gripper = False
-        self._right_close_gripper = False
+        self._left_close_gripper = True   # Start with gripper closed
+        self._right_close_gripper = True  # Start with gripper closed
         self._left_delta_pos = np.zeros(3)
         self._left_delta_rot = np.zeros(3)
         self._right_delta_pos = np.zeros(3)
@@ -137,8 +137,8 @@ class BimanualSe3Keyboard:
         return msg
 
     def reset(self) -> None:
-        self._left_close_gripper = False
-        self._right_close_gripper = False
+        self._left_close_gripper = True   # Start with gripper closed
+        self._right_close_gripper = True  # Start with gripper closed
         self._left_delta_pos = np.zeros(3)
         self._left_delta_rot = np.zeros(3)
         self._right_delta_pos = np.zeros(3)

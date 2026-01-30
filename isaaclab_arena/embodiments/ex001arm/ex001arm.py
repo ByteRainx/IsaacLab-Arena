@@ -13,10 +13,11 @@ import isaaclab.envs.mdp as mdp_isaac_lab
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation.articulation_cfg import ArticulationCfg
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
-from isaaclab.envs.mdp.actions.actions_cfg import BinaryJointPositionActionCfg, DifferentialInverseKinematicsActionCfg
+from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.managers import ActionTermCfg, ObservationGroupCfg as ObsGroup, ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg
+from isaaclab.sensors.contact_sensor import ContactSensorCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg, OffsetCfg
 from isaaclab.sim import PinholeCameraCfg
 from isaaclab.devices.openxr import XrCfg
@@ -27,6 +28,7 @@ import isaaclab.sim as sim_utils
 
 from isaaclab_arena.assets.register import register_asset
 from isaaclab_arena.embodiments.embodiment_base import EmbodimentBase
+from isaaclab_arena.embodiments.ex001arm.actions import ContactLimitedGripperActionCfg
 from isaaclab_arena.embodiments.ex001arm.observations import ex001arm_left_gripper_pos, ex001arm_right_gripper_pos
 from isaaclab_arena.utils.pose import Pose
 
@@ -191,12 +193,46 @@ class EX001ArmSceneCfg:
         ),
     )
 
+    # Head camera (pinhole)
+    head_camera: CameraCfg = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/Head_Camera",
+        update_period=0.0333,
+        height=480,
+        width=640,
+        data_types=["rgb", "distance_to_image_plane"],
+        spawn=PinholeCameraCfg(
+            focal_length=14.0,
+            clipping_range=(0.1, 1.0e5),
+        ),
+        offset=CameraCfg.OffsetCfg(
+            pos=(0.31528, 0.0, 0.79201),
+            rot=(0.66611, 0.23726, -0.23726, -0.66611),
+            convention="opengl",
+        ),
+    )
+
+    # Left gripper contact sensor (tracks finger link contacts)
+    left_gripper_contact: ContactSensorCfg = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_.*_link",
+        update_period=0.0,
+        history_length=1,
+        track_air_time=False,
+    )
+
+    # Right gripper contact sensor (tracks finger link contacts)
+    right_gripper_contact: ContactSensorCfg = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_.*_link",
+        update_period=0.0,
+        history_length=1,
+        track_air_time=False,
+    )
+
 
 def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
     return ArticulationCfg(
         spawn=sim_utils.UsdFileCfg(
             usd_path=usd_path,
-            activate_contact_sensors=False,
+            activate_contact_sensors=True,  # Enable for gripper contact detection
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
             ),
@@ -228,14 +264,14 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             "left_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["left_arm_gripper"],
                 effort_limit_sim=40.0,
-                stiffness=20.0,
+                stiffness=100.0,
                 damping=10.0,
             ),
             # Right gripper actuator
             "right_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["right_arm_gripper"],
                 effort_limit_sim=40.0,
-                stiffness=20.0,
+                stiffness=100.0,
                 damping=10.0,
             ),
         },
@@ -255,12 +291,14 @@ class EX001ArmActionsCfg:
         scale=0.5,
     )
 
-    # Left gripper binary action
-    gripper_action: ActionTermCfg = BinaryJointPositionActionCfg(
+    # Left gripper with contact force limiting
+    gripper_action: ActionTermCfg = ContactLimitedGripperActionCfg(
         asset_name="robot",
         joint_names=["left_arm_gripper"],
         open_command_expr={"left_arm_gripper": 5.0},
-        close_command_expr={"left_arm_gripper": 3.0},
+        close_command_expr={"left_arm_gripper": 0.0},
+        contact_sensor_name="left_gripper_contact",
+        force_threshold=10.0,  # Contact force threshold in N
     )
 
     # Right arm IK action
@@ -272,12 +310,14 @@ class EX001ArmActionsCfg:
         scale=0.5,
     )
 
-    # Right gripper binary action
-    right_gripper_action: ActionTermCfg = BinaryJointPositionActionCfg(
+    # Right gripper with contact force limiting
+    right_gripper_action: ActionTermCfg = ContactLimitedGripperActionCfg(
         asset_name="robot",
         joint_names=["right_arm_gripper"],
         open_command_expr={"right_arm_gripper": 5.0},
-        close_command_expr={"right_arm_gripper": 2.5},
+        close_command_expr={"right_arm_gripper": 0.0},
+        contact_sensor_name="right_gripper_contact",
+        force_threshold=10.0,  # Contact force threshold in N
     )
 
 
@@ -306,6 +346,11 @@ class EX001ArmObservationsCfg:
         right_wrist_cam = ObsTerm(
             func=mdp_isaac_lab.image,
             params={"sensor_cfg": SceneEntityCfg("right_wrist_camera"), "data_type": "rgb", "normalize": False}
+        )
+        # Head camera observation
+        head_cam = ObsTerm(
+            func=mdp_isaac_lab.image,
+            params={"sensor_cfg": SceneEntityCfg("head_camera"), "data_type": "rgb", "normalize": False}
         )
 
         def __post_init__(self):

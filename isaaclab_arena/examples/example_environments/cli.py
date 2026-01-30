@@ -18,6 +18,9 @@ from isaaclab_arena.examples.example_environments.gr1_open_microwave_environment
 from isaaclab_arena.examples.example_environments.ex001arm_cvpr_scene_pick_and_place_environment import (
     Ex001ArmCvprScenePickAndPlaceEnvironment,
 )
+from isaaclab_arena.examples.example_environments.ex001arm_cvpr_scene_put_blocks_to_color_environment import (
+    Ex001ArmCvprScenePutBlocksToColorEnvironment,
+)
 from isaaclab_arena.examples.example_environments.kitchen_pick_and_place_environment import (
     KitchenPickAndPlaceEnvironment,
 )
@@ -39,6 +42,7 @@ ExampleEnvironments = {
     KitchenPickAndPlaceEnvironment.name: KitchenPickAndPlaceEnvironment,
     Ex001ArmKitchenPickAndPlaceEnvironment.name: Ex001ArmKitchenPickAndPlaceEnvironment,
     Ex001ArmCvprScenePickAndPlaceEnvironment.name: Ex001ArmCvprScenePickAndPlaceEnvironment,
+    Ex001ArmCvprScenePutBlocksToColorEnvironment.name: Ex001ArmCvprScenePutBlocksToColorEnvironment,
     GalileoPickAndPlaceEnvironment.name: GalileoPickAndPlaceEnvironment,
     GalileoG1LocomanipPickAndPlaceEnvironment.name: GalileoG1LocomanipPickAndPlaceEnvironment,
     PressButtonEnvironment.name: PressButtonEnvironment,
