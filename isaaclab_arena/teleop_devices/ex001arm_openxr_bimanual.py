@@ -37,7 +37,7 @@ class Ex001ArmOpenXRBimanualTeleopDevice(TeleopDeviceBase):
     def __init__(
         self,
         sim_device: str | None = None,
-        delta_pos_scale_factor: float = 10.0,
+        delta_pos_scale_factor: float = 15.0,
         delta_rot_scale_factor: float = 10.0,
         alpha_pos: float = 0.5,
         alpha_rot: float = 0.5,

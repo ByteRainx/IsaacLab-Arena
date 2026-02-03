@@ -19,15 +19,24 @@ class Ex001ArmCvprScenePutBlocksToColorEnvironment(ExampleEnvironmentBase):
         # NOTE: This method is called after the simulation app is started.
         # Avoid importing IsaacLab modules that depend on Kit/Omni at module import time.
         from isaaclab.assets import AssetBaseCfg
+        from isaaclab.managers import EventTermCfg, SceneEntityCfg
         from isaaclab.sim.spawners.lights import DistantLightCfg
+        from isaaclab_tasks.manager_based.manipulation.stack.mdp import franka_stack_events
 
         from isaaclab_arena.environments.isaaclab_arena_environment import IsaacLabArenaEnvironment
         from isaaclab_arena.scene.scene import Scene
         from isaaclab_arena.tasks.put_blocks_to_color_task import ThreeBlocksToColorTask
+        from isaaclab_arena.utils.configclass import make_configclass
         from isaaclab_arena.utils.pose import Pose
 
         class _CvprScenePutBlocksToColorTask(ThreeBlocksToColorTask):
-            """Put-blocks-to-color task with render knobs for heavy 3DGS backgrounds."""
+            """Put-blocks-to-color task with render knobs and randomized brick positions."""
+
+            def __init__(self, x_range, y_range, z_val, **kwargs):
+                self._brick_x_range = x_range
+                self._brick_y_range = y_range
+                self._brick_z_val = z_val
+                super().__init__(**kwargs)
 
             def modify_env_cfg(self, env_cfg):
                 if hasattr(env_cfg, "wait_for_textures"):
@@ -45,6 +54,30 @@ class Ex001ArmCvprScenePutBlocksToColorEnvironment(ExampleEnvironmentBase):
                     ),
                 )
                 return env_cfg
+
+            def _create_events_cfg(self):
+                """Override to use randomize_object_pose for brick positions."""
+                fields = []
+                asset_cfgs = [SceneEntityCfg(block.name) for block in self.blocks]
+
+                # Randomize all blocks independently
+                event_cfg = EventTermCfg(
+                    func=franka_stack_events.randomize_object_pose,
+                    mode="reset",
+                    params={
+                        "pose_range": {
+                            "x": self._brick_x_range,
+                            "y": self._brick_y_range,
+                            "z": (self._brick_z_val, self._brick_z_val),
+                            "yaw": (-0.5, 0.5),
+                        },
+                        "asset_cfgs": asset_cfgs,
+                    },
+                )
+                fields.append(("reset_blocks_pose", EventTermCfg, event_cfg))
+
+                EventsCfgClass = make_configclass("RandomBlockEventsCfg", fields)
+                return EventsCfgClass()
 
         # Background (fixed)
         background = self.asset_registry.get_asset_by_name("cvpr_background")()
@@ -77,11 +110,16 @@ class Ex001ArmCvprScenePutBlocksToColorEnvironment(ExampleEnvironmentBase):
             else None
         )
 
-        # Three blocks (fixed)
+        # Three blocks (randomized positions)
+        # Random ranges: x=(0, 0.1), y=(-0.7, 0.15), z=-0.15 (fixed)
+        brick_z = -0.15
+        brick_x_range = (0.0, 0.1)
+        brick_y_range = (-0.7, 0.15)
+
         yellow_brick = self.asset_registry.get_asset_by_name("yellow_brick")()
         yellow_brick.set_initial_pose(
             Pose(
-                position_xyz=(0.1, -0.15, -0.15),
+                position_xyz=(0.05, -0.15, brick_z),
                 rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
             )
         )
@@ -89,7 +127,7 @@ class Ex001ArmCvprScenePutBlocksToColorEnvironment(ExampleEnvironmentBase):
         green_brick = self.asset_registry.get_asset_by_name("green_brick")()
         green_brick.set_initial_pose(
             Pose(
-                position_xyz=(0.1, 0.0, -0.15),
+                position_xyz=(0.05, 0.0, brick_z),
                 rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
             )
         )
@@ -97,7 +135,7 @@ class Ex001ArmCvprScenePutBlocksToColorEnvironment(ExampleEnvironmentBase):
         red_brick = self.asset_registry.get_asset_by_name("red_brick")()
         red_brick.set_initial_pose(
             Pose(
-                position_xyz=(0.1, 0.15, -0.15),
+                position_xyz=(0.05, 0.15, brick_z),
                 rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
             )
         )
@@ -140,8 +178,11 @@ class Ex001ArmCvprScenePutBlocksToColorEnvironment(ExampleEnvironmentBase):
             ]
         )
 
-        # Create task with three blocks and three destinations
+        # Create task with three blocks and three destinations (randomized positions)
         task = _CvprScenePutBlocksToColorTask(
+            x_range=brick_x_range,
+            y_range=brick_y_range,
+            z_val=brick_z,
             block_1=yellow_brick,
             block_2=green_brick,
             block_3=red_brick,

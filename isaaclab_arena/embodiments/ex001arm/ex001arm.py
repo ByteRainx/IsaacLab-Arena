@@ -251,28 +251,30 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             # Left arm actuators (6 joints)
             "left_arm_acts": ImplicitActuatorCfg(
                 joint_names_expr=["left_arm_joint[1-6]"],
-                stiffness=1500.0,
-                damping=150.0,
+                effort_limit_sim=87.0,
+                stiffness=80.0,
+                damping=8.0,
             ),
             # Right arm actuators (6 joints)
             "right_arm_acts": ImplicitActuatorCfg(
                 joint_names_expr=["right_arm_joint[1-6]"],
-                stiffness=1500.0,
-                damping=150.0,
+                effort_limit_sim=87.0,
+                stiffness=80.0,
+                damping=8.0,
             ),
             # Left gripper actuator
             "left_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["left_arm_gripper"],
-                effort_limit_sim=40.0,
-                stiffness=100.0,
-                damping=10.0,
+                effort_limit_sim=200.0,
+                stiffness=40.0,
+                damping=15.0,
             ),
             # Right gripper actuator
             "right_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["right_arm_gripper"],
-                effort_limit_sim=40.0,
-                stiffness=100.0,
-                damping=10.0,
+                effort_limit_sim=200.0,
+                stiffness=40.0,
+                damping=15.0,
             ),
         },
     )
@@ -297,8 +299,9 @@ class EX001ArmActionsCfg:
         joint_names=["left_arm_gripper"],
         open_command_expr={"left_arm_gripper": 5.0},
         close_command_expr={"left_arm_gripper": 0.0},
+        grasp_command_expr={"left_arm_gripper": 1.7},
         contact_sensor_name="left_gripper_contact",
-        force_threshold=10.0,  # Contact force threshold in N
+        force_threshold=15.0,  # Contact force threshold in N
     )
 
     # Right arm IK action
@@ -316,8 +319,9 @@ class EX001ArmActionsCfg:
         joint_names=["right_arm_gripper"],
         open_command_expr={"right_arm_gripper": 5.0},
         close_command_expr={"right_arm_gripper": 0.0},
+        grasp_command_expr={"right_arm_gripper": 1.7},
         contact_sensor_name="right_gripper_contact",
-        force_threshold=10.0,  # Contact force threshold in N
+        force_threshold=15.0,  # Contact force threshold in N
     )
 
 

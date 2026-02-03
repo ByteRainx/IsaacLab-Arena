@@ -5,8 +5,6 @@
 
 """Script to run a bimanual keyboard teleoperation for EX001Arm-style control."""
 
-"""Launch Isaac Sim Simulator first."""
-
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -20,44 +18,6 @@ from isaaclab_arena.examples.example_environments.cli import (
     get_arena_builder_from_cli,
 )
 
-# add argparse arguments
-parser = get_isaaclab_arena_cli_parser()
-parser.add_argument("--sensitivity", type=float, default=1.0, help="Sensitivity factor.")
-parser.add_argument(
-    "--enable_pinocchio",
-    action="store_true",
-    default=False,
-    help="Enable Pinocchio.",
-)
-parser.add_argument(
-    "--task",
-    type=str,
-    default=None,
-    help="Task name to expose in logs and teleop logic (e.g. pick_and_place).",
-)
-
-# Add the example environments CLI args
-# NOTE: This has to be added last, because of the app specific flags being parsed after the global flags.
-add_example_environments_cli_args(parser)
-
-# parse the arguments
-args_cli = parser.parse_args()
-
-# ensure task exists (fallback to selected example env)
-if not hasattr(args_cli, "task") or args_cli.task is None:
-    args_cli.task = getattr(args_cli, "example_environment", None) or getattr(args_cli, "environment", "") or ""
-
-app_launcher_args = vars(args_cli)
-
-if args_cli.enable_pinocchio:
-    import pinocchio  # noqa: F401
-
-# launch omniverse app
-app_launcher = AppLauncher(app_launcher_args)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
-
 import numpy as np
 import omni.log
 import torch
@@ -70,7 +30,7 @@ import omni
 @dataclass
 class BimanualSe3KeyboardCfg:
     pos_sensitivity: float = 0.05
-    rot_sensitivity: float = 0.5 
+    rot_sensitivity: float = 0.5
     sim_device: str | None = None
 
 
@@ -255,6 +215,42 @@ def main() -> None:
     Creates the environment, sets up teleoperation interfaces and callbacks,
     and runs the main simulation loop until the application is closed.
     """
+    # add argparse arguments
+    parser = get_isaaclab_arena_cli_parser()
+    parser.add_argument("--sensitivity", type=float, default=1.0, help="Sensitivity factor.")
+    parser.add_argument(
+        "--enable_pinocchio",
+        action="store_true",
+        default=False,
+        help="Enable Pinocchio.",
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default=None,
+        help="Task name to expose in logs and teleop logic (e.g. pick_and_place).",
+    )
+
+    # Add the example environments CLI args
+    # NOTE: This has to be added last, because of the app specific flags being parsed after the global flags.
+    add_example_environments_cli_args(parser)
+
+    # parse the arguments
+    args_cli = parser.parse_args()
+
+    # ensure task exists (fallback to selected example env)
+    if not hasattr(args_cli, "task") or args_cli.task is None:
+        args_cli.task = getattr(args_cli, "example_environment", None) or getattr(args_cli, "environment", "") or ""
+
+    app_launcher_args = vars(args_cli)
+
+    if args_cli.enable_pinocchio:
+        import pinocchio  # noqa: F401
+
+    # launch omniverse app
+    app_launcher = AppLauncher(app_launcher_args)
+    simulation_app = app_launcher.app
+
     # parse configuration
     arena_builder = get_arena_builder_from_cli(args_cli)
     env_name, env_cfg = arena_builder.build_registered()
@@ -348,10 +344,9 @@ def main() -> None:
     # close the simulator
     env.close()
     print("Environment closed")
+    simulation_app.close()
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

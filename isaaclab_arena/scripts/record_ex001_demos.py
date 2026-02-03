@@ -9,36 +9,15 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
-"""
-Script to record demonstrations with EX001Arm using bimanual keyboard or VR control.
-
-This script allows users to record demonstrations with EX001Arm embodiment using
-either bimanual keyboard teleoperation or VR hand tracking. The recorded demonstrations
-are stored as episodes in an hdf5 file. Cameras in the USD scene are always loaded,
-but image recording to HDF5 is optional.
-
-required arguments:
-    --dataset_file            File path to export recorded demos.
-
-optional arguments:
-    -h, --help                Show this help message and exit
-    --step_hz                 Environment stepping rate in Hz. (default: 30, only for keyboard)
-    --num_demos               Number of demonstrations to record. (default: 1, set to 0 for infinite)
-    --sensitivity             Keyboard sensitivity multiplier. (default: 1.0, only for keyboard)
-    --record_images           Record camera images to HDF5. (default: False, saves disk space)
-
-Note: The --teleop_device argument is defined by the environment subparser.
-      Use 'keyboard' for bimanual keyboard control or 'ex001arm_openxr_bimanual' for VR.
-"""
 
 """Launch Isaac Sim Simulator first."""
 
-# Standard library imports
 import contextlib
-from collections.abc import Callable
+import os
+import time
 from dataclasses import dataclass
+from typing import Any
 
-# Isaac Lab AppLauncher
 from isaaclab.app import AppLauncher
 
 from isaaclab_arena.cli.isaaclab_arena_cli import get_isaaclab_arena_cli_parser
@@ -49,7 +28,6 @@ from isaaclab_arena.examples.example_environments.cli import (
 
 
 def _teleop_device_requires_xr(device_name: str | None) -> bool:
-    """Check if teleop device requires XR to be enabled."""
     if not device_name:
         return False
     name = device_name.lower()
@@ -59,287 +37,87 @@ def _teleop_device_requires_xr(device_name: str | None) -> bool:
     }
 
 
-# add argparse arguments
 parser = get_isaaclab_arena_cli_parser()
-parser.add_argument("--dataset_file", type=str, required=True, help="File path to export recorded demos.")
-parser.add_argument("--step_hz", type=int, default=30, help="Environment stepping rate in Hz.")
 parser.add_argument(
-    "--num_demos", type=int, default=1, help="Number of demonstrations to record. Set to 0 for infinite."
+    "--dataset_file",
+    type=str,
+    default="",
+    help="File path or directory to export recorded demos. Defaults to ./demos",
 )
 parser.add_argument(
-    "--sensitivity",
+    "--reset_duration",
     type=float,
-    default=1.0,
-    help="Keyboard sensitivity multiplier (only for keyboard control).",
+    default=10.0,
+    help="Duration of reset trajectory in seconds. Default: 10.0",
 )
-parser.add_argument(
-    "--record_images",
-    action="store_true",
-    default=False,
-    help="Record camera images to HDF5 (increases file size significantly).",
-)
-parser.add_argument(
-    "--enable_pinocchio",
-    action="store_true",
-    default=False,
-    help="Enable Pinocchio.",
-)
+DEFAULT_STEP_HZ = 30
 
-# Add the example environments CLI args
 add_example_environments_cli_args(parser)
 
-# parse the arguments
 args_cli = parser.parse_args()
 
 app_launcher_args = vars(args_cli)
 
-# Auto-enable XR for VR devices
 device_name = getattr(args_cli, "teleop_device", None)
 if _teleop_device_requires_xr(device_name):
     app_launcher_args["xr"] = True
     setattr(args_cli, "xr", True)
 
-if args_cli.enable_pinocchio:
-    import pinocchio  # noqa: F401
-
-# launch the simulator
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
-# Third-party imports
 import gymnasium as gym
-import numpy as np
-import os
-import time
 import torch
-from scipy.spatial.transform import Rotation
 
-import carb
-import omni
 import omni.log
 from isaaclab.devices.teleop_device_factory import create_teleop_device
 from isaaclab.envs.mdp.recorders.recorders_cfg import ActionStateRecorderManagerCfg
 from isaaclab.managers import DatasetExportMode
-from isaaclab.managers.recorder_manager import RecorderTerm, RecorderTermCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.math import quat_mul, quat_conjugate, axis_angle_from_quat
 
 
-# =======================================================================================
-# Camera Recording Support
-# =======================================================================================
+class RateLimiter:
+    def __init__(self, hz: int):
+        self.hz = hz
+        self.last_time = time.time()
+        self.sleep_duration = 1.0 / hz
+        self.render_period = min(0.033, self.sleep_duration)
 
-
-class PreStepFlatCameraObservationsRecorder(RecorderTerm):
-    """Recorder term that records the camera observations in each step.
-    
-    Supports both:
-    - Separate camera_obs group
-    - Camera obs in policy group (like EX001Arm with left_wrist_cam, right_wrist_cam)
-    """
-
-    def record_pre_step(self):
-        camera_data = {}
-        
-        # Check if camera_obs exists as separate group
-        if "camera_obs" in self._env.obs_buf:
-            return "camera_obs", self._env.obs_buf["camera_obs"]
-        
-        # For EX001Arm and similar: camera obs are in policy group with concatenate_terms=False
-        if "policy" in self._env.obs_buf:
-            policy_obs = self._env.obs_buf["policy"]
-            # Check if it's a dict (concatenate_terms=False)
-            if isinstance(policy_obs, dict):
-                for key in ["left_wrist_cam", "right_wrist_cam", "head_cam", "robot_pov_cam_rgb"]:
-                    if key in policy_obs:
-                        camera_data[key] = policy_obs[key]
-        
-        if camera_data:
-            return "camera_obs", camera_data
-        return None
-
-
-@configclass
-class PreStepFlatCameraObservationsRecorderCfg(RecorderTermCfg):
-    """Configuration for the camera observation recorder term."""
-
-    class_type: type[RecorderTerm] = PreStepFlatCameraObservationsRecorder
-
-
-@configclass
-class ArenaEnvRecorderManagerCfg(ActionStateRecorderManagerCfg):
-    """Recorder manager with camera observation recording."""
-
-    record_pre_step_flat_camera_observations = PreStepFlatCameraObservationsRecorderCfg()
-
-
-# =======================================================================================
-# Bimanual Keyboard Controller (copied from teleop_bimanual_keyboard.py to avoid import)
-# =======================================================================================
+    def sleep(self, env: gym.Env):
+        next_wakeup_time = self.last_time + self.sleep_duration
+        while time.time() < next_wakeup_time:
+            time.sleep(self.render_period)
+            env.sim.render()
+        self.last_time = self.last_time + self.sleep_duration
+        if self.last_time < time.time():
+            while self.last_time < time.time():
+                self.last_time += self.sleep_duration
 
 
 @dataclass
-class BimanualSe3KeyboardCfg:
-    pos_sensitivity: float = 0.05
-    rot_sensitivity: float = 0.5 
-    sim_device: str | None = None
+class AutoResetState:
+    success_wait_start: float | None = None
+    success_pending_reset: bool = False
+    active: bool = False
+    start_time: float | None = None
+    done_pending_export: bool = False
+    export_wait_steps: int = 0
+    success_lock: bool = False
+    home_left_ee_pos: torch.Tensor | None = None
+    home_left_ee_quat: torch.Tensor | None = None
+    home_right_ee_pos: torch.Tensor | None = None
+    home_right_ee_quat: torch.Tensor | None = None
 
-
-class BimanualSe3Keyboard:
-    """Keyboard controller that outputs two independent SE(3)+gripper commands (14-dim).
-
-    Left arm:
-      - Toggle gripper: K
-      - Move: W/S (x), A/D (y), Q/E (z)
-      - Rotate: Z/X (rx), T/G (ry), C/V (rz)
-
-    Right arm:
-      - Toggle gripper: P
-      - Move: I/F (x), J/L (y), U/O (z)
-      - Rotate: N/M (rx), Y/B (ry), 1/2 (rz)
-
-    Output layout:
-      [left_dx, left_dy, left_dz, left_drx, left_dry, left_drz, left_grip,
-       right_dx, right_dy, right_dz, right_drx, right_dry, right_drz, right_grip]
-    """
-
-    def __init__(self, cfg: BimanualSe3KeyboardCfg):
-        self.pos_sensitivity = cfg.pos_sensitivity
-        self.rot_sensitivity = cfg.rot_sensitivity
-        self._sim_device = cfg.sim_device
-
-        self._appwindow = omni.appwindow.get_default_app_window()
-        self._input = carb.input.acquire_input_interface()
-        self._keyboard = self._appwindow.get_keyboard()
-        self._keyboard_sub = self._input.subscribe_to_keyboard_events(
-            self._keyboard,
-            lambda event, *args, obj=self: obj._on_keyboard_event(event, *args),
-        )
-
-        self._additional_callbacks: dict[str, Callable[[], None]] = {}
-
-        self._left_close_gripper = False
-        self._right_close_gripper = False
-        self._left_delta_pos = np.zeros(3)
-        self._left_delta_rot = np.zeros(3)
-        self._right_delta_pos = np.zeros(3)
-        self._right_delta_rot = np.zeros(3)
-
-        self._create_key_bindings()
-
-    def __del__(self):
-        try:
-            self._input.unsubscribe_to_keyboard_events(self._keyboard, self._keyboard_sub)
-        except Exception:
-            pass
-        self._keyboard_sub = None
-
-    def __str__(self) -> str:
-        msg = f"Bimanual Keyboard Controller (SE(3)+gripper): {self.__class__.__name__}\n"
-        msg += f"\tKeyboard name: {self._input.get_keyboard_name(self._keyboard)}\n"
-        msg += "\t----------------------------------------------\n"
-        msg += "\tLeft gripper toggle: K\n"
-        msg += "\tLeft move: W/S (x), A/D (y), Q/E (z)\n"
-        msg += "\tLeft rotate: Z/X (rx), T/G (ry), C/V (rz)\n"
-        msg += "\tRight gripper toggle: P\n"
-        msg += "\tRight move: I/F (x), J/L (y), U/O (z)\n"
-        msg += "\tRight rotate: N/M (rx), Y/B (ry), 1/2 (rz)\n"
-        msg += "\tReset device state: R\n"
-        return msg
-
-    def reset(self) -> None:
-        self._left_close_gripper = False
-        self._right_close_gripper = False
-        self._left_delta_pos = np.zeros(3)
-        self._left_delta_rot = np.zeros(3)
-        self._right_delta_pos = np.zeros(3)
-        self._right_delta_rot = np.zeros(3)
-
-    def add_callback(self, key: str, func: Callable[[], None]) -> None:
-        self._additional_callbacks[key] = func
-
-    def advance(self) -> torch.Tensor:
-        left_rot_vec = Rotation.from_euler("XYZ", self._left_delta_rot).as_rotvec()
-        right_rot_vec = Rotation.from_euler("XYZ", self._right_delta_rot).as_rotvec()
-        left_cmd = np.concatenate([self._left_delta_pos, left_rot_vec, [-1.0 if self._left_close_gripper else 1.0]])
-        right_cmd = np.concatenate(
-            [self._right_delta_pos, right_rot_vec, [-1.0 if self._right_close_gripper else 1.0]]
-        )
-        cmd = np.concatenate([left_cmd, right_cmd])
-        return torch.tensor(cmd, dtype=torch.float32, device=self._sim_device)
-
-    def _create_key_bindings(self) -> None:
-        ps = self.pos_sensitivity
-        rs = self.rot_sensitivity
-
-        self._LEFT_POS = {
-            "W": np.asarray([1.0, 0.0, 0.0]) * ps,
-            "S": np.asarray([-1.0, 0.0, 0.0]) * ps,
-            "A": np.asarray([0.0, 1.0, 0.0]) * ps,
-            "D": np.asarray([0.0, -1.0, 0.0]) * ps,
-            "Q": np.asarray([0.0, 0.0, 1.0]) * ps,
-            "E": np.asarray([0.0, 0.0, -1.0]) * ps,
-        }
-        self._LEFT_ROT = {
-            "Z": np.asarray([1.0, 0.0, 0.0]) * rs,
-            "X": np.asarray([-1.0, 0.0, 0.0]) * rs,
-            "T": np.asarray([0.0, 1.0, 0.0]) * rs,
-            "G": np.asarray([0.0, -1.0, 0.0]) * rs,
-            "C": np.asarray([0.0, 0.0, 1.0]) * rs,
-            "V": np.asarray([0.0, 0.0, -1.0]) * rs,
-        }
-        self._RIGHT_POS = {
-            "I": np.asarray([1.0, 0.0, 0.0]) * ps,
-            "F": np.asarray([-1.0, 0.0, 0.0]) * ps,
-            "J": np.asarray([0.0, 1.0, 0.0]) * ps,
-            "L": np.asarray([0.0, -1.0, 0.0]) * ps,
-            "U": np.asarray([0.0, 0.0, 1.0]) * ps,
-            "O": np.asarray([0.0, 0.0, -1.0]) * ps,
-        }
-        self._RIGHT_ROT = {
-            "N": np.asarray([1.0, 0.0, 0.0]) * rs,
-            "M": np.asarray([-1.0, 0.0, 0.0]) * rs,
-            "Y": np.asarray([0.0, 1.0, 0.0]) * rs,
-            "B": np.asarray([0.0, -1.0, 0.0]) * rs,
-            "1": np.asarray([0.0, 0.0, 1.0]) * rs,
-            "2": np.asarray([0.0, 0.0, -1.0]) * rs,
-        }
-
-    def _on_keyboard_event(self, event, *args, **kwargs) -> bool:
-        if event.type == carb.input.KeyboardEventType.KEY_PRESS:
-            key = event.input.name
-            if key == "R":
-                self.reset()
-            elif key == "K":
-                self._left_close_gripper = not self._left_close_gripper
-            elif key == "P":
-                self._right_close_gripper = not self._right_close_gripper
-            elif key in self._LEFT_POS:
-                self._left_delta_pos += self._LEFT_POS[key]
-            elif key in self._LEFT_ROT:
-                self._left_delta_rot += self._LEFT_ROT[key]
-            elif key in self._RIGHT_POS:
-                self._right_delta_pos += self._RIGHT_POS[key]
-            elif key in self._RIGHT_ROT:
-                self._right_delta_rot += self._RIGHT_ROT[key]
-
-            callback = self._additional_callbacks.get(key)
-            if callback:
-                callback()
-
-        if event.type == carb.input.KeyboardEventType.KEY_RELEASE:
-            key = event.input.name
-            if key in self._LEFT_POS:
-                self._left_delta_pos -= self._LEFT_POS[key]
-            elif key in self._LEFT_ROT:
-                self._left_delta_rot -= self._LEFT_ROT[key]
-            elif key in self._RIGHT_POS:
-                self._right_delta_pos -= self._RIGHT_POS[key]
-            elif key in self._RIGHT_ROT:
-                self._right_delta_rot -= self._RIGHT_ROT[key]
-
-        return True
+    def clear(self):
+        self.success_wait_start = None
+        self.success_pending_reset = False
+        self.active = False
+        self.start_time = None
+        self.done_pending_export = False
+        self.export_wait_steps = 0
+        self.success_lock = False
 
 
 def _get_expected_action_dim(env) -> int | None:
@@ -360,131 +138,69 @@ def _map_action_dim(action: torch.Tensor, expected_dim: int) -> torch.Tensor:
     return mapped
 
 
-# =======================================================================================
-# Recording Logic
-# =======================================================================================
+def _check_success(success_term: Any | None, env: gym.Env) -> bool:
+    if success_term is None:
+        return False
+    return bool(success_term.func(env, **success_term.params)[0])
 
 
-class RateLimiter:
-    """Convenience class for enforcing rates in loops."""
-
-    def __init__(self, hz: int):
-        """Initialize a RateLimiter with specified frequency.
-
-        Args:
-            hz: Frequency to enforce in Hertz.
-        """
-        self.hz = hz
-        self.last_time = time.time()
-        self.sleep_duration = 1.0 / hz
-        self.render_period = min(0.033, self.sleep_duration)
-
-    def sleep(self, env: gym.Env):
-        """Attempt to sleep at the specified rate in hz.
-
-        Args:
-            env: Environment to render during sleep periods.
-        """
-        next_wakeup_time = self.last_time + self.sleep_duration
-        while time.time() < next_wakeup_time:
-            time.sleep(self.render_period)
-            env.sim.render()
-
-        self.last_time = self.last_time + self.sleep_duration
-
-        # detect time jumping forwards (e.g. loop is too slow)
-        if self.last_time < time.time():
-            while self.last_time < time.time():
-                self.last_time += self.sleep_duration
+def _get_ee_poses(env: gym.Env) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    left_ee = env.scene["ee_frame"]
+    right_ee = env.scene["right_ee_frame"]
+    left_pos = left_ee.data.target_pos_w[0, 0, :].clone()
+    left_quat = left_ee.data.target_quat_w[0, 0, :].clone()
+    right_pos = right_ee.data.target_pos_w[0, 0, :].clone()
+    right_quat = right_ee.data.target_quat_w[0, 0, :].clone()
+    return left_pos, left_quat, right_pos, right_quat
 
 
-def setup_output_directories() -> tuple[str, str]:
-    """Set up output directories for saving demonstrations.
+def _compute_reset_action(
+    env: gym.Env,
+    auto_reset: AutoResetState,
+    expected_action_dim: int,
+    reset_duration: float,
+    pos_gain: float = 0.3,
+    rot_gain: float = 0.3,
+) -> torch.Tensor:
+    """Compute action to move EE towards home position."""
+    action = torch.zeros(expected_action_dim, device=env.device)
 
-    Creates the output directory if it doesn't exist and extracts the file name
-    from the dataset file path.
+    if auto_reset.home_left_ee_pos is None:
+        return action
 
-    Returns:
-        tuple[str, str]: A tuple containing:
-            - output_dir: The directory path where the dataset will be saved
-            - output_file_name: The filename (without extension) for the dataset
-    """
-    # get directory path and file name (without extension) from cli arguments
-    output_dir = os.path.dirname(args_cli.dataset_file)
-    output_file_name = os.path.splitext(os.path.basename(args_cli.dataset_file))[0]
+    elapsed = time.time() - auto_reset.start_time if auto_reset.start_time else 0.0
+    alpha = min(elapsed / reset_duration, 1.0)
+    blend_gain = 1.0 - alpha * 0.5
 
-    # create directory if it does not exist
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"Created output directory: {output_dir}")
+    left_pos, left_quat, right_pos, right_quat = _get_ee_poses(env)
 
-    return output_dir, output_file_name
+    left_pos_delta = (auto_reset.home_left_ee_pos - left_pos) * pos_gain * blend_gain
+    left_quat_error = quat_mul(auto_reset.home_left_ee_quat, quat_conjugate(left_quat))
+    left_rot_delta = axis_angle_from_quat(left_quat_error) * rot_gain * blend_gain
+    action[0:3] = left_pos_delta
+    action[3:6] = left_rot_delta
+    action[6] = -1.0  # Close left gripper during reset
 
+    right_pos_delta = (auto_reset.home_right_ee_pos - right_pos) * pos_gain * blend_gain
+    right_quat_error = quat_mul(auto_reset.home_right_ee_quat, quat_conjugate(right_quat))
+    right_rot_delta = axis_angle_from_quat(right_quat_error) * rot_gain * blend_gain
+    action[7:10] = right_pos_delta
+    action[10:13] = right_rot_delta
 
-def create_environment() -> tuple[gym.Env, int, object]:
-    """Create and configure the environment for recording.
+    if expected_action_dim > 13:
+        action[13] = -1.0  # Close right gripper during reset
 
-    Returns:
-        tuple[gym.Env, int, object]: A tuple containing:
-            - env: The configured environment
-            - expected_action_dim: Expected action dimension
-            - env_cfg: Environment configuration (needed for VR teleop)
-    """
-    # parse configuration
-    try:
-        arena_builder = get_arena_builder_from_cli(args_cli)
-        env_name, env_cfg = arena_builder.build_registered()
-    except Exception as e:
-        omni.log.error(f"Failed to parse environment configuration: {e}")
-        exit(1)
-
-    # modify configuration for recording
-    env_cfg.terminations.time_out = None
-    env_cfg.observations.policy.concatenate_terms = False
-
-    # configure recorder
-    output_dir, output_file_name = setup_output_directories()
-    
-    # Setup recorders - use ArenaEnvRecorderManagerCfg when recording images
-    if args_cli.record_images:
-        env_cfg.recorders = ArenaEnvRecorderManagerCfg()
-        print("[INFO] Camera image recording enabled - HDF5 file size will be larger")
-    else:
-        env_cfg.recorders = ActionStateRecorderManagerCfg()
-        print("[INFO] Recording actions and states only (no images)")
-        
-        # Remove camera observations from policy group to avoid recording images
-        camera_obs_keys = ["left_wrist_cam", "right_wrist_cam", "head_cam", "robot_pov_cam_rgb"]
-        for cam_key in camera_obs_keys:
-            if hasattr(env_cfg.observations.policy, cam_key):
-                delattr(env_cfg.observations.policy, cam_key)
-                print(f"[INFO] Removed {cam_key} from observations")
-    
-    env_cfg.recorders.dataset_export_dir_path = output_dir
-    env_cfg.recorders.dataset_filename = output_file_name
-    env_cfg.recorders.dataset_export_mode = DatasetExportMode.EXPORT_ALL
-
-    # create environment
-    try:
-        env = gym.make(env_name, cfg=env_cfg).unwrapped
-    except Exception as e:
-        omni.log.error(f"Failed to create environment: {e}")
-        exit(1)
-
-    expected_action_dim = _get_expected_action_dim(env) or env.action_space.shape[-1]
-    return env, expected_action_dim, env_cfg
+    return action
 
 
-def create_teleop_interface(env, env_cfg) -> object:
-    """Create teleop interface based on device type."""
+def create_teleop_interface(env, env_cfg):
     device_name = getattr(args_cli, "teleop_device", "keyboard") or "keyboard"
-    
+
     if _teleop_device_requires_xr(device_name):
-        # VR device - use factory
         teleop_callbacks = {}
         if hasattr(env_cfg, "teleop_devices") and device_name in env_cfg.teleop_devices.devices:
             teleop_interface = create_teleop_device(
-                device_name, 
+                device_name,
                 env_cfg.teleop_devices.devices,
                 teleop_callbacks
             )
@@ -494,131 +210,271 @@ def create_teleop_interface(env, env_cfg) -> object:
             exit(1)
         return teleop_interface
     else:
-        # Keyboard device
-        sensitivity = float(args_cli.sensitivity)
-        cfg = BimanualSe3KeyboardCfg()
-        teleop_interface = BimanualSe3Keyboard(
-            BimanualSe3KeyboardCfg(
-                pos_sensitivity=cfg.pos_sensitivity * sensitivity,
-                rot_sensitivity=cfg.rot_sensitivity * sensitivity,
-                sim_device=env.device,
-            )
+        from isaaclab_arena.scripts.teleop_bimanual_keyboard import (
+            BimanualSe3Keyboard,
+            BimanualSe3KeyboardCfg,
         )
+        cfg = BimanualSe3KeyboardCfg(sim_device=env.device)
+        teleop_interface = BimanualSe3Keyboard(cfg)
         print("[INFO] Using keyboard teleop device")
         return teleop_interface
 
 
 def main() -> None:
-    """Main function to record demonstrations with bimanual keyboard or VR control."""
-    # Create environment
-    env, expected_action_dim, env_cfg = create_environment()
+    # Parse environment configuration
+    try:
+        arena_builder = get_arena_builder_from_cli(args_cli)
+        env_name, env_cfg = arena_builder.build_registered()
+    except Exception as e:
+        omni.log.error(f"Failed to parse environment configuration: {e}")
+        exit(1)
 
-    # Set up teleoperation interface (keyboard or VR)
-    teleop_interface = create_teleop_interface(env, env_cfg)
+    success_term = None
+    if hasattr(env_cfg.terminations, "success"):
+        success_term = env_cfg.terminations.success
+        env_cfg.terminations.success = None
 
-    # State variables
-    should_reset = False
-    recorded_demos = 0
+    env_cfg.terminations.time_out = None
+    env_cfg.observations.policy.concatenate_terms = False
+
+    # Setup output directory
+    dataset_path = args_cli.dataset_file or "./demos"
+    dataset_ext = os.path.splitext(dataset_path)[1]
+    is_dir_path = dataset_path.endswith(os.sep) or dataset_ext == ""
+
+    if is_dir_path:
+        output_dir = dataset_path.rstrip(os.sep) or "."
+    else:
+        output_dir = os.path.dirname(dataset_path) or "."
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        print(f"Created output directory: {output_dir}")
+
     device_name = getattr(args_cli, "teleop_device", None)
     is_vr = _teleop_device_requires_xr(device_name)
-    
-    # For VR: wait for START button. For keyboard: start immediately
+
+    def _device_tag() -> str:
+        return "vr" if is_vr else "keyboard"
+
+    def _next_available_filename() -> str:
+        prefix = _device_tag()
+        base_prefix = f"{prefix}_episode"
+        index = 0
+        while True:
+            candidate = f"{base_prefix}{index}"
+            candidate_path = os.path.join(output_dir, f"{candidate}.hdf5")
+            if not os.path.exists(candidate_path):
+                return candidate
+            index += 1
+
+    # Get first filename
+    current_output_file_name = _next_available_filename()
+    current_output_path = os.path.join(output_dir, f"{current_output_file_name}.hdf5")
+
+    # Configure recorder
+    env_cfg.recorders = ActionStateRecorderManagerCfg()
+    print("[INFO] Recording actions and states only (no images)")
+
+    camera_obs_keys = ["left_wrist_cam", "right_wrist_cam", "head_cam", "robot_pov_cam_rgb"]
+    for cam_key in camera_obs_keys:
+        if hasattr(env_cfg.observations.policy, cam_key):
+            delattr(env_cfg.observations.policy, cam_key)
+            print(f"[INFO] Removed {cam_key} from observations")
+
+    env_cfg.recorders.dataset_export_dir_path = output_dir
+    env_cfg.recorders.dataset_filename = current_output_file_name
+    env_cfg.recorders.dataset_export_mode = DatasetExportMode.EXPORT_ALL
+
+    try:
+        env = gym.make(env_name, cfg=env_cfg).unwrapped
+    except Exception as e:
+        omni.log.error(f"Failed to create environment: {e}")
+        exit(1)
+
+    expected_action_dim = _get_expected_action_dim(env) or env.action_space.shape[-1]
+    teleop_interface = create_teleop_interface(env, env_cfg)
+
+    should_reset = False
+    recorded_demos = 0
+    auto_reset = AutoResetState()
+    reset_duration = args_cli.reset_duration
+
+    def _store_home_ee_poses() -> None:
+        left_pos, left_quat, right_pos, right_quat = _get_ee_poses(env)
+        auto_reset.home_left_ee_pos = left_pos
+        auto_reset.home_left_ee_quat = left_quat
+        auto_reset.home_right_ee_pos = right_pos
+        auto_reset.home_right_ee_quat = right_quat
+
+    # VR: wait for START; Keyboard: start immediately
     running_recording = not is_vr
 
-    def reset_and_export() -> None:
-        """Export current demo and reset environment."""
-        nonlocal recorded_demos
+    def export_and_prepare_next() -> None:
+        nonlocal recorded_demos, current_output_file_name, current_output_path
+        nonlocal running_recording
+
+        # Export current episode
         env.recorder_manager.record_pre_reset([0], force_export_or_skip=False)
         env.recorder_manager.export_episodes([0])
+
+        recorded_demos += 1
+        print(f"[{recorded_demos}] Demo exported to: {current_output_path}")
+
+        # Close existing dataset file handler to allow new file creation
+        if hasattr(env.recorder_manager, '_dataset_file_handler') and env.recorder_manager._dataset_file_handler is not None:
+            env.recorder_manager._dataset_file_handler.close()
+
+        # Prepare new filename for next trajectory
+        current_output_file_name = _next_available_filename()
+        current_output_path = os.path.join(output_dir, f"{current_output_file_name}.hdf5")
+
+        # Update recorder config and create new file handler
+        env.recorder_manager.cfg.dataset_filename = current_output_file_name
+        env.recorder_manager._dataset_file_handler = env.recorder_manager.cfg.dataset_file_handler_class_type()
+        env.recorder_manager._dataset_file_handler.create(
+            os.path.join(output_dir, current_output_file_name),
+            env_name=getattr(env.cfg, "env_name", None)
+        )
         env.recorder_manager.reset([0])
+
+        # Reset environment
         env.sim.reset()
         env.reset()
         teleop_interface.reset()
-        recorded_demos += 1
-        print(f"[{recorded_demos}/{args_cli.num_demos if args_cli.num_demos > 0 else '∞'}] Demo exported and environment reset")
+        _store_home_ee_poses()
+
+        # Stop recording, wait for user to click START
+        running_recording = False
+        print("=" * 60)
+        print(f"[INFO] Ready for next trajectory: {current_output_file_name}.hdf5")
+        print("[INFO] Click START in VR to begin recording next trajectory")
+        print("=" * 60)
+
+    def reset_only() -> None:
+        env.sim.reset()
+        env.recorder_manager.reset([0])
+        env.reset()
+        teleop_interface.reset()
+        _store_home_ee_poses()
+        auto_reset.clear()
+        print("[INFO] Environment reset (no export).")
 
     def request_reset() -> None:
-        """Request reset on next loop iteration."""
         nonlocal should_reset
         should_reset = True
 
     def start_recording() -> None:
-        """Start recording (for VR control)."""
         nonlocal running_recording
         running_recording = True
-        print("[INFO] Recording started")
+        print(f"[INFO] Recording started → {current_output_file_name}.hdf5")
 
     def stop_recording() -> None:
-        """Stop recording (for VR control)."""
         nonlocal running_recording
         running_recording = False
         print("[INFO] Recording paused")
 
-    # Add callbacks
     teleop_interface.add_callback("R", request_reset)
     teleop_interface.add_callback("RESET", request_reset)
     teleop_interface.add_callback("START", start_recording)
     teleop_interface.add_callback("STOP", stop_recording)
 
-    # Set up rate limiter (not needed for VR devices)
-    rate_limiter = None if is_vr else RateLimiter(args_cli.step_hz)
+    rate_limiter = None if is_vr else RateLimiter(DEFAULT_STEP_HZ)
 
-    # Reset before starting
+    # Initial setup
     env.sim.reset()
     env.reset()
     teleop_interface.reset()
+    _store_home_ee_poses()
 
-    # Print control instructions
     if not is_vr:
         print(f"Using teleop device:\n{teleop_interface}")
     print("=" * 60)
+    print(f"[INFO] Output directory: {output_dir}")
+    print(f"[INFO] Reset duration: {reset_duration}s")
+    print("[INFO] One trajectory per HDF5 file")
     if is_vr:
-        print("VR Mode: Click START button in VR to begin recording")
-        print("         Click STOP to pause, RESET to discard and restart")
-    print("Press 'R' to export current demo and reset for next recording.")
-    print(f"Target: {args_cli.num_demos if args_cli.num_demos > 0 else '∞ (infinite)'} demonstrations")
+        print("[INFO] VR Mode: Click START to begin recording")
+        print("[INFO]          Click STOP to pause, RESET to discard")
+    print("[INFO] Press 'R' to reset (no export)")
     print("=" * 60)
 
-    # Main recording loop
     with contextlib.suppress(KeyboardInterrupt) and torch.inference_mode():
         while simulation_app.is_running():
-            # Get action from teleop interface
-            action = teleop_interface.advance()
-            device_action = _map_action_dim(action, expected_action_dim)
+            # Compute action
+            if auto_reset.active:
+                device_action = _compute_reset_action(
+                    env, auto_reset, expected_action_dim, reset_duration
+                )
+            elif auto_reset.done_pending_export:
+                device_action = torch.zeros(expected_action_dim, device=env.device)
+            else:
+                action = teleop_interface.advance()
+                device_action = _map_action_dim(action, expected_action_dim)
 
-            # Step environment only if recording is active
-            if running_recording:
+            # Step environment
+            should_step = running_recording or auto_reset.active or auto_reset.done_pending_export
+            if should_step:
                 env.step(device_action.repeat(env.num_envs, 1))
             else:
-                # Just render if not recording (VR waiting for START)
                 env.sim.render()
 
-            # Handle reset request
+            # Detect success
+            if (
+                running_recording
+                and not auto_reset.success_pending_reset
+                and not auto_reset.active
+                and not auto_reset.done_pending_export
+                and not auto_reset.success_lock
+                and _check_success(success_term, env)
+            ):
+                auto_reset.success_pending_reset = True
+                auto_reset.success_wait_start = time.time()
+                auto_reset.success_lock = True
+                print(f"[INFO] Success! Waiting 2s then {reset_duration}s reset trajectory...")
+
+            # Start auto reset after wait
+            if auto_reset.success_pending_reset and auto_reset.success_wait_start is not None:
+                if time.time() - auto_reset.success_wait_start >= 2.0:
+                    auto_reset.active = True
+                    auto_reset.start_time = time.time()
+                    running_recording = True
+                    print(f"[INFO] Reset trajectory started ({reset_duration}s)...")
+                    auto_reset.success_pending_reset = False
+                    auto_reset.success_wait_start = None
+
+            # Check reset completion
+            if auto_reset.active and auto_reset.start_time is not None:
+                if time.time() - auto_reset.start_time >= reset_duration:
+                    auto_reset.active = False
+                    auto_reset.done_pending_export = True
+                    auto_reset.export_wait_steps = 2
+                    auto_reset.start_time = None
+
+            # Export after wait steps
+            if auto_reset.done_pending_export and not auto_reset.active:
+                if should_step and auto_reset.export_wait_steps > 0:
+                    auto_reset.export_wait_steps -= 1
+                if auto_reset.export_wait_steps == 0:
+                    export_and_prepare_next()
+                    auto_reset.done_pending_export = False
+                    auto_reset.success_lock = False
+
+            # Handle manual reset
             if should_reset:
-                reset_and_export()
+                reset_only()
                 should_reset = False
 
-            # Check if target number of demos reached
-            if args_cli.num_demos > 0 and recorded_demos >= args_cli.num_demos:
-                print(f"All {args_cli.num_demos} demonstrations recorded. Exiting.")
-                break
-
-            # Check if simulation is stopped
             if env.sim.is_stopped():
                 break
 
-            # Rate limiting (only for keyboard mode)
             if rate_limiter:
                 rate_limiter.sleep(env)
 
-    # Clean up
     env.close()
     print(f"Recording session completed with {recorded_demos} demonstrations")
-    print(f"Demonstrations saved to: {args_cli.dataset_file}")
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
     simulation_app.close()
