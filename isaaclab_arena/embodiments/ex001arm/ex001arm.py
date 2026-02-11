@@ -13,7 +13,10 @@ import isaaclab.envs.mdp as mdp_isaac_lab
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation.articulation_cfg import ArticulationCfg
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
-from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
+from isaaclab.envs.mdp.actions.actions_cfg import (
+    DifferentialInverseKinematicsActionCfg,
+    JointPositionActionCfg,
+)
 from isaaclab.managers import ActionTermCfg, ObservationGroupCfg as ObsGroup, ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg
@@ -97,6 +100,7 @@ class EX001ArmEmbodiment(EmbodimentBase):
         usd_path: str | None = None,
         xr_anchor_pos: tuple[float, float, float] | None = None,
         xr_anchor_rot: tuple[float, float, float, float] | None = None,
+        action_mode: str = "ee",
     ):
         super().__init__(enable_cameras=enable_cameras, initial_pose=initial_pose)
         self.scene_config = EX001ArmSceneCfg()
@@ -104,7 +108,10 @@ class EX001ArmEmbodiment(EmbodimentBase):
         self.scene_config.robot = _make_ex001arm_articulation_cfg(usd_path=resolved_usd_path).replace(
             prim_path="{ENV_REGEX_NS}/Robot"
         )
-        self.action_config = EX001ArmActionsCfg()
+        if action_mode == "joint":
+            self.action_config = EX001ArmJointActionsCfg()
+        else:
+            self.action_config = EX001ArmActionsCfg()
         self.observation_config = EX001ArmObservationsCfg()
         env_anchor_pos = _parse_env_tuple(os.environ.get("ISAACLAB_ARENA_EX001ARM_XR_ANCHOR_POS"), 3)
         env_anchor_rot = _parse_env_tuple(os.environ.get("ISAACLAB_ARENA_EX001ARM_XR_ANCHOR_ROT"), 4)
@@ -322,6 +329,48 @@ class EX001ArmActionsCfg:
         grasp_command_expr={"right_arm_gripper": 1.7},
         contact_sensor_name="right_gripper_contact",
         force_threshold=15.0,  # Contact force threshold in N
+    )
+
+
+@configclass
+class EX001ArmJointActionsCfg:
+    """Absolute joint position action specifications for ARX teleoperation.
+
+    Used with ``Ex001ArmArxBimanualTeleop`` in **joint** control mode.
+    Each arm's 6 joint positions are set directly, and the gripper receives
+    an absolute joint position value (``0.0`` = close, ``5.0`` = open).
+    """
+
+    # Left arm -- absolute joint position
+    arm_action: ActionTermCfg = JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["left_arm_joint[1-6]"],
+        scale=1.0,
+        use_default_offset=False,
+    )
+
+    # Left gripper -- absolute joint position (0.0 close → 5.0 open)
+    gripper_action: ActionTermCfg = JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["left_arm_gripper"],
+        scale=1.0,
+        use_default_offset=False,
+    )
+
+    # Right arm -- absolute joint position
+    right_arm_action: ActionTermCfg = JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["right_arm_joint[1-6]"],
+        scale=1.0,
+        use_default_offset=False,
+    )
+
+    # Right gripper -- absolute joint position (0.0 close → 5.0 open)
+    right_gripper_action: ActionTermCfg = JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["right_arm_gripper"],
+        scale=1.0,
+        use_default_offset=False,
     )
 
 
