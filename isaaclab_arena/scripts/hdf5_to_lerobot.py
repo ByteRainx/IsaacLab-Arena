@@ -36,6 +36,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torchvision
+from scipy.spatial.transform import Rotation as R
 
 # ============================================================
 # Configuration - aligned with convert2lerobot.py
@@ -52,17 +53,10 @@ CAMERA_NAME_MAPPING = {
     "right_wrist_cam": "rightImg",
 }
 
-# State observation keys (order determines observation.state layout)
-STATE_KEYS = [
-    "joint_pos",          # (18,)
-    "eef_pos",            # (3,)
-    "eef_quat",           # (4,)
-    "gripper_pos",        # (1,)
-    "right_eef_pos",      # (3,)
-    "right_eef_quat",     # (4,)
-    "right_gripper_pos",  # (1,)
-]
-# Total state dim = 34
+# State observation layout: [x, y, z, r, p, y, gripper] × 2 arms = 14D
+# Left arm:  eef_pos(3) + eef_quat→euler(3) + gripper_pos(1) = 7
+# Right arm: right_eef_pos(3) + right_eef_quat→euler(3) + right_gripper_pos(1) = 7
+# Total state dim = 14
 
 # v2.1 path templates
 DATA_PATH_TEMPLATE = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
@@ -193,16 +187,37 @@ def extract_episode_data(
 
         total_frames_img = cam_group[ref_cam_key].shape[0] if ref_cam_key else 0
 
-        # State observations
+        # State observations: [x, y, z, r, p, y, gripper] × 2 arms = 14D
         obs_group = img_demo["obs"] if "obs" in img_demo else img_demo
+        n_frames = total_frames_img - skip_n
+
+        def _quat_to_euler(quat_wxyz: np.ndarray) -> np.ndarray:
+            """Convert quaternion (w,x,y,z) to euler angles (roll, pitch, yaw)."""
+            # IsaacLab uses (w, x, y, z), scipy expects (x, y, z, w)
+            quat_xyzw = np.concatenate([quat_wxyz[:, 1:4], quat_wxyz[:, 0:1]], axis=1)
+            return R.from_quat(quat_xyzw).as_euler('xyz').astype(np.float32)
+
         state_parts = []
-        for key in STATE_KEYS:
-            if key in obs_group:
-                state_parts.append(obs_group[key][skip_n:].astype(np.float32))
-        if state_parts:
-            state = np.concatenate(state_parts, axis=1)
+        has_state = True
+        # Left arm: [eef_pos(3), euler(3), gripper(1)]
+        if "eef_pos" in obs_group and "eef_quat" in obs_group and "gripper_pos" in obs_group:
+            state_parts.append(obs_group["eef_pos"][skip_n:].astype(np.float32))          # (N, 3)
+            state_parts.append(_quat_to_euler(obs_group["eef_quat"][skip_n:].astype(np.float32)))  # (N, 3)
+            state_parts.append(obs_group["gripper_pos"][skip_n:].astype(np.float32))      # (N, 1)
         else:
-            state = np.zeros((total_frames_img - skip_n, 0), dtype=np.float32)
+            has_state = False
+        # Right arm: [right_eef_pos(3), euler(3), right_gripper(1)]
+        if "right_eef_pos" in obs_group and "right_eef_quat" in obs_group and "right_gripper_pos" in obs_group:
+            state_parts.append(obs_group["right_eef_pos"][skip_n:].astype(np.float32))    # (N, 3)
+            state_parts.append(_quat_to_euler(obs_group["right_eef_quat"][skip_n:].astype(np.float32)))  # (N, 3)
+            state_parts.append(obs_group["right_gripper_pos"][skip_n:].astype(np.float32))  # (N, 1)
+        else:
+            has_state = False
+
+        if has_state and state_parts:
+            state = np.concatenate(state_parts, axis=1)  # (N, 14)
+        else:
+            state = np.zeros((n_frames, 14), dtype=np.float32)
 
         # Camera observations
         cameras = {}
@@ -211,10 +226,25 @@ def extract_episode_data(
                 cameras[lerobot_key] = cam_group[hdf5_key][skip_n:]
 
     # Actions from original HDF5
+    # Raw action layout: [dx,dy,dz, axis_angle(3), gripper] × 2 arms = 14D
+    # Convert rotation from axis-angle to euler: [dx,dy,dz, r,p,y, gripper] × 2 arms = 14D
     with h5py.File(original_path, "r") as f_orig:
         orig_demo_key = find_data_demo(f_orig)
         orig_demo = f_orig[f"data/{orig_demo_key}"]
-        actions = orig_demo["actions"][skip_n:].astype(np.float32)
+        raw_actions = orig_demo["actions"][skip_n:].astype(np.float32)
+
+        def _rotvec_to_euler(rotvec: np.ndarray) -> np.ndarray:
+            """Convert axis-angle (rotation vector) to euler angles (roll, pitch, yaw)."""
+            return R.from_rotvec(rotvec).as_euler('xyz').astype(np.float32)
+
+        actions = np.concatenate([
+            raw_actions[:, 0:3],                          # left pos (3)
+            _rotvec_to_euler(raw_actions[:, 3:6]),         # left rot: axis-angle → euler (3)
+            raw_actions[:, 6:7],                           # left gripper (1)
+            raw_actions[:, 7:10],                          # right pos (3)
+            _rotvec_to_euler(raw_actions[:, 10:13]),       # right rot: axis-angle → euler (3)
+            raw_actions[:, 13:14],                         # right gripper (1)
+        ], axis=1)  # (N, 14)
 
     # Ensure frame counts match
     num_frames = min(len(actions), len(state))
