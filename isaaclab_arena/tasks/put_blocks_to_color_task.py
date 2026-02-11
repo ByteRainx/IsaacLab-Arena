@@ -33,9 +33,9 @@ def all_objects_on_destinations(
     env: ManagerBasedRLEnv,
     object_cfgs: list[SceneEntityCfg],
     destination_cfgs: list[SceneEntityCfg],
-    x_threshold: float = 0.08,
-    y_threshold: float = 0.12,
-    z_threshold: float = 0.04,
+    x_threshold: float = 0.12,
+    y_threshold: float = 0.16,
+    z_threshold: float = 0.06,
     velocity_threshold: float = 0.5,
 ) -> torch.Tensor:
     """Check if all objects are placed on their corresponding destinations using proximity.
