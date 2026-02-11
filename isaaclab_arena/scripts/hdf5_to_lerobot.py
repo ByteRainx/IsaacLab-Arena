@@ -8,7 +8,7 @@ Convert HDF5 demonstration files to LeRobot v2.1 dataset format.
 Output format follows GR00T-LeRobot v2.1 standard (per-episode files):
   data/chunk-000/episode_000000.parquet  (one per episode)
   videos/chunk-000/observation.images.faceImg/episode_000000.mp4  (one per episode per camera)
-  meta/info.json, episodes.jsonl, tasks.jsonl
+  meta/info.json, episodes.jsonl, tasks.jsonl, episodes_stats.jsonl
 
 Camera naming aligned with convert2lerobot.py:
   head_cam -> faceImg, left_wrist_cam -> leftImg, right_wrist_cam -> rightImg
@@ -266,6 +266,104 @@ def extract_episode_data(
     }
 
 
+def compute_episode_stats(
+    episode_index: int,
+    global_index_start: int,
+    actions: np.ndarray,
+    state: np.ndarray,
+    cameras: dict[str, np.ndarray],
+    num_frames: int,
+    task_index: int,
+    max_image_samples: int = 100,
+) -> dict:
+    """
+    Compute per-episode statistics for episodes_stats.jsonl.
+
+    For each feature, computes: min, max, mean, std, count.
+    - Vector features (action, state): per-dimension stats as lists.
+    - Scalar features (timestamp, index, etc.): single-element lists.
+    - Image features: per-channel stats in [C, 1, 1] nested list format,
+      sampled from up to max_image_samples frames, normalized to [0, 1].
+    """
+    stats = {}
+
+    def _array_stats(arr: np.ndarray) -> dict:
+        """Compute stats for a 2D array (N, D) → per-dimension stats."""
+        return {
+            "min": arr.min(axis=0).tolist(),
+            "max": arr.max(axis=0).tolist(),
+            "mean": arr.mean(axis=0).tolist(),
+            "std": arr.std(axis=0).tolist(),
+            "count": [len(arr)],
+        }
+
+    def _scalar_stats(arr: np.ndarray) -> dict:
+        """Compute stats for a 1D scalar array → single-element list stats."""
+        return {
+            "min": [float(arr.min())],
+            "max": [float(arr.max())],
+            "mean": [float(arr.mean())],
+            "std": [float(arr.std())],
+            "count": [len(arr)],
+        }
+
+    def _image_stats(frames: np.ndarray, max_samples: int) -> dict:
+        """
+        Compute per-channel image stats in [C, 1, 1] nested list format.
+        frames: (N, H, W, C) uint8 → normalized to [0, 1] float.
+        Samples up to max_samples frames for efficiency.
+        """
+        n = len(frames)
+        if n > max_samples:
+            indices = np.linspace(0, n - 1, max_samples, dtype=int)
+            frames = frames[indices]
+        # Normalize to [0, 1]
+        frames_f = frames.astype(np.float32) / 255.0
+        n_channels = frames_f.shape[-1]
+        # Per-channel stats: compute over (N, H, W) for each channel
+        ch_min, ch_max, ch_mean, ch_std = [], [], [], []
+        for c in range(n_channels):
+            ch_data = frames_f[..., c]
+            ch_min.append([[float(ch_data.min())]])
+            ch_max.append([[float(ch_data.max())]])
+            ch_mean.append([[float(ch_data.mean())]])
+            ch_std.append([[float(ch_data.std())]])
+        return {
+            "min": ch_min,
+            "max": ch_max,
+            "mean": ch_mean,
+            "std": ch_std,
+            "count": [len(frames)],
+        }
+
+    # --- Image features ---
+    for cam_key, cam_frames in cameras.items():
+        video_key = f"observation.images.{cam_key}"
+        stats[video_key] = _image_stats(cam_frames, max_image_samples)
+
+    # --- Vector features ---
+    stats["observation.state"] = _array_stats(state)
+    stats["action"] = _array_stats(actions)
+
+    # --- Scalar features ---
+    timestamps = np.arange(num_frames, dtype=np.float64) / FPS
+    stats["timestamp"] = _scalar_stats(timestamps)
+
+    frame_indices = np.arange(num_frames, dtype=np.int64)
+    stats["frame_index"] = _scalar_stats(frame_indices)
+
+    ep_indices = np.full(num_frames, episode_index, dtype=np.int64)
+    stats["episode_index"] = _scalar_stats(ep_indices)
+
+    global_indices = np.arange(global_index_start, global_index_start + num_frames, dtype=np.int64)
+    stats["index"] = _scalar_stats(global_indices)
+
+    task_indices = np.full(num_frames, task_index, dtype=np.int64)
+    stats["task_index"] = _scalar_stats(task_indices)
+
+    return {"episode_index": episode_index, "stats": stats}
+
+
 def write_episode_video(frames: np.ndarray, video_path: Path, fps: int) -> None:
     """Write frames to mp4 video using torchvision (h264 codec, matching GR00T convert)."""
     video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -340,7 +438,7 @@ def main():
     args = parse_args()
 
     input_dir = Path(args.input_dir)
-    output_dir = Path(args.output_dir) if args.output_dir else input_dir / "lerobot_dataset"
+    output_dir = Path(args.output_dir) if args.output_dir else input_dir / "lerobot_dataset_new"
     task = args.task
 
     # --- Discover HDF5 file pairs ---
@@ -387,6 +485,7 @@ def main():
 
     # --- Process each HDF5 pair as one episode ---
     episodes_info = []
+    episodes_stats = []
     total_frames = 0
     video_meta_cache = {}
 
@@ -443,6 +542,18 @@ def main():
                 if meta:
                     video_meta_cache[video_key] = meta
 
+        # --- Compute per-episode statistics ---
+        ep_stats = compute_episode_stats(
+            episode_index=episode_index,
+            global_index_start=total_frames,
+            actions=actions,
+            state=state,
+            cameras=cameras,
+            num_frames=num_frames,
+            task_index=0,
+        )
+        episodes_stats.append(ep_stats)
+
         # --- Track episode info ---
         episodes_info.append({
             "episode_index": episode_index,
@@ -462,6 +573,13 @@ def main():
     with open(episodes_path, "w") as f:
         for ep in episodes_info:
             f.write(json.dumps(ep) + "\n")
+
+    # --- Write meta/episodes_stats.jsonl ---
+    episodes_stats_path = meta_dir / "episodes_stats.jsonl"
+    with open(episodes_stats_path, "w") as f:
+        for ep_stats in episodes_stats:
+            f.write(json.dumps(ep_stats) + "\n")
+    print(f"\n  Written: meta/episodes_stats.jsonl ({len(episodes_stats)} episodes)")
 
     # --- Build features dict ---
     features = {}
