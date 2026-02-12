@@ -239,6 +239,11 @@ def main() -> None:
         omni.log.error(f"Failed to parse environment configuration: {e}")
         exit(1)
 
+    # --- Use 1:1 scale action config for physical arm teleop --------
+    from isaaclab_arena.embodiments.ex001arm.ex001arm import EX001ArmPhysicalTeleopActionsCfg
+    env_cfg.actions = EX001ArmPhysicalTeleopActionsCfg()
+    print("[INFO] Using EX001ArmPhysicalTeleopActionsCfg (IK scale=1.0, 1:1 mapping)")
+
     # Success / termination handling
     success_term = None
     if hasattr(env_cfg.terminations, "success"):

@@ -333,6 +333,55 @@ class EX001ArmActionsCfg:
 
 
 @configclass
+class EX001ArmPhysicalTeleopActionsCfg:
+    """Action config for physical arm teleoperation (1:1 scale).
+
+    Same as ``EX001ArmActionsCfg`` but with ``scale=1.0`` on the IK actions,
+    so that delta poses from a same-model physical arm map 1:1 to simulation.
+    """
+
+    # Left arm IK action -- scale=1.0 for 1:1 physical mapping
+    arm_action: ActionTermCfg = DifferentialInverseKinematicsActionCfg(
+        asset_name="robot",
+        joint_names=["left_arm_joint[1-6]"],
+        body_name="left_arm_gripper_base_link",
+        controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=True, ik_method="dls"),
+        scale=1.0,
+    )
+
+    # Left gripper with contact force limiting
+    gripper_action: ActionTermCfg = ContactLimitedGripperActionCfg(
+        asset_name="robot",
+        joint_names=["left_arm_gripper"],
+        open_command_expr={"left_arm_gripper": 5.0},
+        close_command_expr={"left_arm_gripper": 0.0},
+        grasp_command_expr={"left_arm_gripper": 1.7},
+        contact_sensor_name="left_gripper_contact",
+        force_threshold=15.0,
+    )
+
+    # Right arm IK action -- scale=1.0 for 1:1 physical mapping
+    right_arm_action: ActionTermCfg = DifferentialInverseKinematicsActionCfg(
+        asset_name="robot",
+        joint_names=["right_arm_joint[1-6]"],
+        body_name="right_arm_gripper_base_link",
+        controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=True, ik_method="dls"),
+        scale=1.0,
+    )
+
+    # Right gripper with contact force limiting
+    right_gripper_action: ActionTermCfg = ContactLimitedGripperActionCfg(
+        asset_name="robot",
+        joint_names=["right_arm_gripper"],
+        open_command_expr={"right_arm_gripper": 5.0},
+        close_command_expr={"right_arm_gripper": 0.0},
+        grasp_command_expr={"right_arm_gripper": 1.7},
+        contact_sensor_name="right_gripper_contact",
+        force_threshold=15.0,
+    )
+
+
+@configclass
 class EX001ArmJointActionsCfg:
     """Absolute joint position action specifications for ARX teleoperation.
 
