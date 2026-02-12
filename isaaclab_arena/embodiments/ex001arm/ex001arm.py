@@ -5,11 +5,16 @@
 
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import MISSING
 from pathlib import Path
 from typing import Any, Callable
 
+import torch
+
 import isaaclab.envs.mdp as mdp_isaac_lab
+import isaaclab.utils.math as PoseUtils
+from isaaclab.envs import ManagerBasedRLMimicEnv
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation.articulation_cfg import ArticulationCfg
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
@@ -27,6 +32,7 @@ from isaaclab_tasks.manager_based.manipulation.stack.mdp.observations import ee_
 import isaaclab.sim as sim_utils
 
 from isaaclab_arena.assets.register import register_asset
+from isaaclab_arena.embodiments.common.mimic_utils import get_rigid_and_articulated_object_poses
 from isaaclab_arena.embodiments.embodiment_base import EmbodimentBase
 from isaaclab_arena.embodiments.ex001arm.actions import ContactLimitedGripperActionCfg
 from isaaclab_arena.embodiments.ex001arm.observations import ex001arm_left_gripper_pos, ex001arm_right_gripper_pos
@@ -106,6 +112,7 @@ class EX001ArmEmbodiment(EmbodimentBase):
         )
         self.action_config = EX001ArmActionsCfg()
         self.observation_config = EX001ArmObservationsCfg()
+        self.mimic_env = EX001ArmMimicEnv
         env_anchor_pos = _parse_env_tuple(os.environ.get("ISAACLAB_ARENA_EX001ARM_XR_ANCHOR_POS"), 3)
         env_anchor_rot = _parse_env_tuple(os.environ.get("ISAACLAB_ARENA_EX001ARM_XR_ANCHOR_ROT"), 4)
         self.xr = XrCfg(
@@ -362,3 +369,210 @@ class EX001ArmObservationsCfg:
             self.concatenate_terms = False
 
     policy: PolicyCfg = PolicyCfg()
+
+
+# ============================================================
+# Mimic environment for EX001Arm bimanual robot
+# ============================================================
+# Adapted from FrankaMimicEnv for bimanual control.
+# Action layout: [left_arm(6), left_gripper(1), right_arm(6), right_gripper(1)] = 14D
+class EX001ArmMimicEnv(ManagerBasedRLMimicEnv):
+    """Mimic environment for the EX001Arm bimanual robot."""
+
+    def get_robot_eef_pose(self, eef_name: str, env_ids: Sequence[int] | None = None) -> torch.Tensor:
+        """
+        Get current robot end effector pose.
+        Args:
+            eef_name: Name of the end effector ("left" or "right").
+            env_ids: Environment indices. If None, all envs are considered.
+        Returns:
+            A torch.Tensor eef pose matrix. Shape is (len(env_ids), 4, 4)
+        """
+        if env_ids is None:
+            env_ids = slice(None)
+
+        if eef_name == "left":
+            eef_pos = self.obs_buf["policy"]["eef_pos"][env_ids]
+            eef_quat = self.obs_buf["policy"]["eef_quat"][env_ids]
+        elif eef_name == "right":
+            eef_pos = self.obs_buf["policy"]["right_eef_pos"][env_ids]
+            eef_quat = self.obs_buf["policy"]["right_eef_quat"][env_ids]
+        else:
+            raise ValueError(f"Unknown eef_name: {eef_name}. Expected 'left' or 'right'.")
+
+        # Quaternion format is w,x,y,z
+        return PoseUtils.make_pose(eef_pos, PoseUtils.matrix_from_quat(eef_quat))
+
+    def _compute_single_eef_action(
+        self,
+        eef_name: str,
+        target_eef_pose: torch.Tensor,
+        gripper_action: torch.Tensor,
+        noise: float | None,
+        env_id: int,
+    ) -> torch.Tensor:
+        """Compute delta pose action + gripper for a single EEF. Returns (7,) tensor."""
+        target_pos, target_rot = PoseUtils.unmake_pose(target_eef_pose)
+
+        curr_pose = self.get_robot_eef_pose(eef_name, env_ids=[env_id])[0]
+        curr_pos, curr_rot = PoseUtils.unmake_pose(curr_pose)
+
+        delta_position = target_pos - curr_pos
+
+        delta_rot_mat = target_rot.matmul(curr_rot.transpose(-1, -2))
+        delta_quat = PoseUtils.quat_from_matrix(delta_rot_mat)
+        delta_rotation = PoseUtils.axis_angle_from_quat(delta_quat)
+
+        pose_action = torch.cat([delta_position, delta_rotation], dim=0)
+        if noise is not None:
+            noise_tensor = noise * torch.randn_like(pose_action)
+            pose_action += noise_tensor
+            pose_action = torch.clamp(pose_action, -1.0, 1.0)
+
+        return torch.cat([pose_action, gripper_action], dim=0)
+
+    def target_eef_pose_to_action(
+        self,
+        target_eef_pose_dict: dict,
+        gripper_action_dict: dict,
+        noise: float | None = None,
+        env_id: int = 0,
+    ) -> torch.Tensor:
+        """
+        Takes target poses and gripper actions for both EEFs and returns a 14D action.
+        Action layout: [left_arm(6), left_gripper(1), right_arm(6), right_gripper(1)]
+        Args:
+            target_eef_pose_dict: Dictionary of 4x4 target eef pose for each end-effector.
+            gripper_action_dict: Dictionary of gripper actions for each end-effector.
+            noise: Noise to add to the action. If None, no noise is added.
+            env_id: Environment index to get the action for.
+        Returns:
+            An action torch.Tensor (14D) compatible with env.step().
+        """
+        eef_names = list(self.cfg.subtask_configs.keys())
+
+        parts = []
+        for eef_name in eef_names:
+            target_pose = target_eef_pose_dict[eef_name]
+            gripper_action = gripper_action_dict[eef_name]
+            part = self._compute_single_eef_action(
+                eef_name, target_pose, gripper_action, noise, env_id,
+            )
+            parts.append(part)
+
+        # If only one EEF is configured (unlikely for bimanual), pad with zeros
+        if len(parts) == 1:
+            parts.append(torch.zeros(7, device=parts[0].device))
+
+        return torch.cat(parts, dim=0)
+
+    def _delta_to_target_pose(
+        self,
+        eef_name: str,
+        delta_position: torch.Tensor,
+        delta_rotation: torch.Tensor,
+    ) -> torch.Tensor:
+        """Convert delta position + rotation to target 4x4 pose for a single EEF."""
+        curr_pose = self.get_robot_eef_pose(eef_name, env_ids=None)
+        curr_pos, curr_rot = PoseUtils.unmake_pose(curr_pose)
+
+        target_pos = curr_pos + delta_position
+
+        delta_rotation_angle = torch.linalg.norm(delta_rotation, dim=-1, keepdim=True)
+        delta_rotation_axis = delta_rotation / delta_rotation_angle
+
+        is_close_to_zero = torch.isclose(
+            delta_rotation_angle, torch.zeros_like(delta_rotation_angle)
+        ).squeeze(1)
+        delta_rotation_axis[is_close_to_zero] = torch.zeros_like(delta_rotation_axis)[is_close_to_zero]
+
+        delta_quat = PoseUtils.quat_from_angle_axis(
+            delta_rotation_angle.squeeze(1), delta_rotation_axis
+        ).squeeze(0)
+        delta_rot_mat = PoseUtils.matrix_from_quat(delta_quat)
+        target_rot = torch.matmul(delta_rot_mat, curr_rot)
+
+        return PoseUtils.make_pose(target_pos, target_rot).clone()
+
+    def action_to_target_eef_pose(self, action: torch.Tensor) -> dict[str, torch.Tensor]:
+        """
+        Converts 14D action to target poses for both EEFs.
+        Action layout: [left_arm(6), left_gripper(1), right_arm(6), right_gripper(1)]
+        Args:
+            action: Environment action. Shape is (num_envs, 14)
+        Returns:
+            A dictionary mapping eef_name to target pose (num_envs, 4, 4)
+        """
+        eef_names = list(self.cfg.subtask_configs.keys())
+        target_poses = {}
+
+        # Left arm: action[:, 0:3] = pos, action[:, 3:6] = rot
+        if "left" in eef_names:
+            left_delta_pos = action[:, 0:3]
+            left_delta_rot = action[:, 3:6]
+            target_poses["left"] = self._delta_to_target_pose("left", left_delta_pos, left_delta_rot)
+
+        # Right arm: action[:, 7:10] = pos, action[:, 10:13] = rot
+        if "right" in eef_names:
+            right_delta_pos = action[:, 7:10]
+            right_delta_rot = action[:, 10:13]
+            target_poses["right"] = self._delta_to_target_pose("right", right_delta_pos, right_delta_rot)
+
+        return target_poses
+
+    def actions_to_gripper_actions(self, actions: torch.Tensor) -> dict[str, torch.Tensor]:
+        """
+        Extracts gripper actions from the 14D action tensor.
+        Action layout: [left_arm(6), left_gripper(1), right_arm(6), right_gripper(1)]
+        Args:
+            actions: environment actions. Shape is (num_envs, num_steps, 14).
+        Returns:
+            A dictionary of gripper actions keyed by eef_name.
+        """
+        eef_names = list(self.cfg.subtask_configs.keys())
+        gripper_actions = {}
+
+        if "left" in eef_names:
+            gripper_actions["left"] = actions[:, 6:7]
+        if "right" in eef_names:
+            gripper_actions["right"] = actions[:, 13:14]
+
+        return gripper_actions
+
+    def get_object_poses(self, env_ids: Sequence[int] | None = None):
+        """
+        Gets the pose of each object (rigid and articulated) in the current scene.
+        Args:
+            env_ids: Environment indices. If None, all envs are considered.
+        Returns:
+            A dictionary that maps object names to object pose matrix (4x4 torch.Tensor)
+        """
+        if env_ids is None:
+            env_ids = slice(None)
+
+        state = self.scene.get_state(is_relative=True)
+        return get_rigid_and_articulated_object_poses(state, env_ids)
+
+    def get_subtask_term_signals(self, env_ids: Sequence[int] | None = None) -> dict[str, torch.Tensor]:
+        """
+        Gets subtask termination signals for auto-annotation.
+
+        For the put_blocks_to_color task, detects grasp/place events based on
+        gripper state changes. Falls back to zeros if detection is not possible.
+
+        Note: If auto-annotation is unreliable, use manual annotation mode instead
+        (run annotate_demos.py without --auto and press 'S' to mark boundaries).
+
+        Args:
+            env_ids: Environment indices. If None, all envs are considered.
+        Returns:
+            A dictionary mapping signal names to boolean tensors.
+        """
+        if env_ids is None:
+            env_ids = slice(None)
+
+        # Return empty signals — manual annotation is recommended for this embodiment.
+        # The annotate_demos.py script will use manual mode (keyboard 'S' key)
+        # to mark subtask boundaries during demo replay.
+        signals = {}
+        return signals

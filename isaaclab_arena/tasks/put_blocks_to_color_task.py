@@ -403,5 +403,23 @@ class PutBlocksToColorMimicEnvCfg(MimicEnvCfg):
                 )
             ]
             self.subtask_configs["left"] = left_subtask_configs
+        elif self.embodiment_name == "ex001arm":
+            # EX001Arm bimanual: right arm handles primary manipulation subtasks
+            self.subtask_configs["right"] = subtask_configs
+            # Left arm stays static (holds position)
+            left_subtask_configs = [
+                SubTaskConfig(
+                    object_ref=self.block_names[0] if self.block_names else "block_0",
+                    subtask_term_signal=None,
+                    subtask_term_offset_range=(0, 0),
+                    selection_strategy="nearest_neighbor_object",
+                    selection_strategy_kwargs={"nn_k": 3},
+                    action_noise=0.005,
+                    num_interpolation_steps=0,
+                    num_fixed_steps=0,
+                    apply_noise_during_interpolation=False,
+                )
+            ]
+            self.subtask_configs["left"] = left_subtask_configs
         else:
             raise ValueError(f"Embodiment name {self.embodiment_name} not supported")
