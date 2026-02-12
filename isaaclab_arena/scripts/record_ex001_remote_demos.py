@@ -80,6 +80,18 @@ parser.add_argument(
     help="Control mode: 'ee' (end-effector delta, default) or 'joint' "
          "(direct joint positions, no IK, fastest).",
 )
+parser.add_argument(
+    "--joint_signs", type=str, default="1,1,1,1,1,1",
+    help="Per-joint sign multipliers (6 comma-separated values). "
+         "Use -1 to flip a joint axis. Example: '1,1,1,1,-1,1' to invert joint5. "
+         "Default: '1,1,1,1,1,1'",
+)
+parser.add_argument(
+    "--joint_offsets", type=str, default="0,0,0,0,0,0",
+    help="Per-joint offsets in radians (6 comma-separated values). "
+         "Applied after sign: sim = sign * phys + offset. "
+         "Default: '0,0,0,0,0,0'",
+)
 
 add_example_environments_cli_args(parser)
 
@@ -91,12 +103,72 @@ simulation_app = app_launcher.app
 # ── Post-simulation imports ───────────────────────────────────────────────────
 
 import gymnasium as gym
+import numpy as np
 import torch
 
 import omni.log
 from isaaclab.envs.mdp.recorders.recorders_cfg import ActionStateRecorderManagerCfg
 from isaaclab.managers import DatasetExportMode
 from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul
+
+
+# ── Joint diagnostic helpers ──────────────────────────────────────────────────
+
+def _parse_float_list(s: str, expected_len: int, name: str) -> tuple[float, ...]:
+    """Parse a comma-separated string of floats."""
+    parts = [x.strip() for x in s.split(",")]
+    if len(parts) != expected_len:
+        raise ValueError(
+            f"--{name} expects {expected_len} values, got {len(parts)}: '{s}'"
+        )
+    return tuple(float(x) for x in parts)
+
+
+def _dump_joint_info(env) -> None:
+    """Print detailed joint information from the simulation articulation.
+
+    Helps diagnose axis/limit mismatches between the physical arm and the
+    simulation model.
+    """
+    robot = env.scene["robot"]
+    joint_names = robot.joint_names
+
+    # Joint positions and limits
+    joint_pos = robot.data.joint_pos[0].cpu().numpy()
+    joint_limits = robot.data.joint_limits[0].cpu().numpy() if hasattr(robot.data, "joint_limits") else None
+
+    # Default joint positions from the articulation config
+    default_pos = robot.data.default_joint_pos[0].cpu().numpy() if hasattr(robot.data, "default_joint_pos") else None
+
+    print("\n" + "=" * 80)
+    print("  SIMULATION JOINT DIAGNOSTIC (from USD articulation)")
+    print("=" * 80)
+    print(f"  Total joints: {len(joint_names)}")
+    print(f"  {'Idx':<4} {'Joint Name':<35} {'Curr Pos':>10} {'Default':>10} {'Lower':>10} {'Upper':>10}")
+    print("  " + "-" * 83)
+    for i, name in enumerate(joint_names):
+        curr = f"{joint_pos[i]:+.4f}" if i < len(joint_pos) else "N/A"
+        defp = f"{default_pos[i]:+.4f}" if default_pos is not None and i < len(default_pos) else "N/A"
+        lo = f"{joint_limits[i, 0]:+.4f}" if joint_limits is not None and i < len(joint_limits) else "N/A"
+        hi = f"{joint_limits[i, 1]:+.4f}" if joint_limits is not None and i < len(joint_limits) else "N/A"
+        # Highlight arm joints
+        marker = " <<" if "arm_joint" in name else ""
+        print(f"  {i:<4} {name:<35} {curr:>10} {defp:>10} {lo:>10} {hi:>10}{marker}")
+
+    # Also show action term → joint mapping for JointPositionActionCfg
+    if hasattr(env, "action_manager"):
+        print("\n  ACTION TERM -> JOINT MAPPING:")
+        for term_name, term in env.action_manager._terms.items():
+            if hasattr(term, "_joint_ids"):
+                jids = term._joint_ids
+                jnames = [joint_names[j] for j in jids] if isinstance(jids, (list, tuple)) else "N/A"
+                print(f"    {term_name}: joint_ids={list(jids)} -> {jnames}")
+            elif hasattr(term, "joint_ids"):
+                jids = term.joint_ids
+                jnames = [joint_names[j] for j in jids] if isinstance(jids, (list, tuple)) else "N/A"
+                print(f"    {term_name}: joint_ids={list(jids)} -> {jnames}")
+
+    print("=" * 80 + "\n")
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -203,6 +275,10 @@ def create_teleop_interface(env):
         Ex001ArmWsRemoteTeleop,
     )
 
+    # Parse joint mapping parameters
+    joint_signs = _parse_float_list(args_cli.joint_signs, 6, "joint_signs")
+    joint_offsets = _parse_float_list(args_cli.joint_offsets, 6, "joint_offsets")
+
     cfg = Ex001ArmWsRemoteCfg(
         remote_ip=args_cli.remote_ip,
         remote_port=args_cli.remote_port,
@@ -211,11 +287,16 @@ def create_teleop_interface(env):
         pos_scale=args_cli.pos_scale,
         rot_scale=args_cli.rot_scale,
         debug=args_cli.debug,
+        joint_signs=joint_signs,
+        joint_offsets=joint_offsets,
     )
     teleop = Ex001ArmWsRemoteTeleop(cfg)
     mode_label = args_cli.control_mode.upper()
     print(f"[INFO] Using remote WebSocket teleop ({mode_label} mode): "
           f"ws://{args_cli.remote_ip}:{args_cli.remote_port}")
+    if args_cli.control_mode == "joint":
+        print(f"[INFO] Joint signs  : {joint_signs}")
+        print(f"[INFO] Joint offsets: {joint_offsets}")
     return teleop
 
 
@@ -294,6 +375,11 @@ def main() -> None:
         exit(1)
 
     expected_action_dim = _get_expected_action_dim(env) or env.action_space.shape[-1]
+
+    # Dump joint diagnostic information (always in joint mode or when --debug)
+    if args_cli.control_mode == "joint" or args_cli.debug:
+        _dump_joint_info(env)
+
     teleop_interface = create_teleop_interface(env)
 
     # State

@@ -83,6 +83,25 @@ class Ex001ArmWsRemoteCfg:
     debug: bool = False
     """Print incoming data periodically for debugging."""
 
+    # -- Joint mode mapping --------------------------------------------------
+
+    joint_signs: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+    """Per-joint sign multipliers (6 values, one per arm joint).
+    Use ``-1.0`` to invert a joint's direction when the physical arm
+    and the simulation model have opposite axis conventions.
+
+    Example: if simulation joint5 rotates opposite to physical joint5::
+
+        joint_signs = (1, 1, 1, 1, -1, 1)
+    """
+
+    joint_offsets: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    """Per-joint offset in radians added *after* sign multiplication.
+    Useful when the simulation zero and the physical zero differ.
+
+    ``sim_joint = sign * physical_joint + offset``
+    """
+
 
 class Ex001ArmWsRemoteTeleop:
     """Remote bimanual teleop device that receives arm states via WebSocket.
@@ -118,6 +137,10 @@ class Ex001ArmWsRemoteTeleop:
         # Previous EE poses for delta computation (EE mode only)
         self._prev_left: np.ndarray | None = None   # [x,y,z,roll,pitch,yaw]
         self._prev_right: np.ndarray | None = None
+
+        # Joint mapping arrays (joint mode)
+        self._joint_signs = np.array(cfg.joint_signs, dtype=np.float64)
+        self._joint_offsets = np.array(cfg.joint_offsets, dtype=np.float64)
 
         # Debug counter
         self._debug_counter = 0
@@ -292,13 +315,19 @@ class Ex001ArmWsRemoteTeleop:
     # ------------------------------------------------------------------
 
     def _advance_joint(self) -> torch.Tensor:
-        """Return 14D absolute joint position action from JointInformation data.
+        """Return 14D absolute joint position action from JointControl data.
 
         Layout: [left_j1..j6, left_gripper, right_j1..j6, right_gripper]
 
         ``joint_pos`` from the bridge is a 7-element array where indices
         0-5 are joint angles and index 6 is the gripper joint position.
-        These values are passed through directly with no transformation.
+
+        Each joint value is transformed as::
+
+            sim_joint[i] = joint_signs[i] * physical_joint[i] + joint_offsets[i]
+
+        This handles axis direction differences and zero-offset mismatches
+        between the physical arm and the simulation model.
         """
         with self._lock:
             state = self._latest
@@ -318,21 +347,36 @@ class Ex001ArmWsRemoteTeleop:
         right_jp = np.array(right["joint_pos"], dtype=np.float64)
 
         # joint_pos[0:6] = joint angles, joint_pos[6] = gripper
-        left_joints = left_jp[:6]
+        left_joints_raw = left_jp[:6]
         left_grip = left_jp[6] if len(left_jp) > 6 else 0.0
-        right_joints = right_jp[:6]
+        right_joints_raw = right_jp[:6]
         right_grip = right_jp[6] if len(right_jp) > 6 else 0.0
 
-        # Debug
+        # Apply per-joint sign and offset mapping
+        # sim_joint = sign * physical_joint + offset
+        left_joints = self._joint_signs * left_joints_raw + self._joint_offsets
+        right_joints = self._joint_signs * right_joints_raw + self._joint_offsets
+
+        # Debug -- print every 50 frames: raw input, mapped output, and per-joint diff
         if self.cfg.debug:
             self._debug_counter += 1
             if self._debug_counter % 50 == 0:
                 print(
-                    f"[Joint Debug] L_joints={np.round(left_joints, 3).tolist()}  "
-                    f"L_grip={left_grip:.3f}  "
-                    f"R_joints={np.round(right_joints, 3).tolist()}  "
-                    f"R_grip={right_grip:.3f}"
+                    f"[Joint Debug #{self._debug_counter}] "
+                    f"signs={self._joint_signs.tolist()}  "
+                    f"offsets={np.round(self._joint_offsets, 4).tolist()}"
                 )
+                for side, raw, mapped, grip in [
+                    ("L", left_joints_raw, left_joints, left_grip),
+                    ("R", right_joints_raw, right_joints, right_grip),
+                ]:
+                    print(
+                        f"  {side}_raw   = [{', '.join(f'{v:+.4f}' for v in raw)}]  "
+                        f"grip={grip:.3f}"
+                    )
+                    print(
+                        f"  {side}_mapped= [{', '.join(f'{v:+.4f}' for v in mapped)}]"
+                    )
 
         cmd = np.concatenate([left_joints, [left_grip], right_joints, [right_grip]])
         return torch.tensor(cmd, dtype=torch.float32, device=self._sim_device)
