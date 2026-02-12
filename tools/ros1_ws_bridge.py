@@ -7,7 +7,7 @@ via WebSocket for real-time teleoperation in IsaacLab-Arena.
 
 Supports three modes:
     ee    -- End-effector only  (PosCmd topics)
-    joint -- Joint position only (JointInformation topics)
+    joint -- Joint position only (JointControl topics)
     both  -- Both EE and joint data in one payload
 
 Dependencies:
@@ -26,8 +26,8 @@ Usage:
 Topic conventions (defaults):
     /master1_pos_back   -> left arm  EE   (arm_control/PosCmd)
     /master2_pos_back   -> right arm EE   (arm_control/PosCmd)
-    /joint_information  -> left arm  joints (arm_control/JointInformation)
-    /joint_information2 -> right arm joints (arm_control/JointInformation)
+    /joint_control      -> left arm  joints (arm_control/JointControl)
+    /joint_control2     -> right arm joints (arm_control/JointControl)
 """
 
 from __future__ import print_function
@@ -52,7 +52,7 @@ class ArmState:
         # EE data (from PosCmd)
         self._left_ee = None   # type: dict | None
         self._right_ee = None  # type: dict | None
-        # Joint data (from JointInformation)
+        # Joint data (from JointControl)
         self._left_joint = None   # type: dict | None
         self._right_joint = None  # type: dict | None
 
@@ -135,9 +135,9 @@ def ros_thread(state, mode, ee_left_topic, ee_right_topic,
         rospy.loginfo("[ws_bridge] EE topics: left=%s  right=%s", ee_left_topic, ee_right_topic)
 
     if mode in ("joint", "both"):
-        from arm_control.msg import JointInformation
-        rospy.Subscriber(joint_left_topic, JointInformation, state.update_left_joint, queue_size=1)
-        rospy.Subscriber(joint_right_topic, JointInformation, state.update_right_joint, queue_size=1)
+        from arm_control.msg import JointControl
+        rospy.Subscriber(joint_left_topic, JointControl, state.update_left_joint, queue_size=1)
+        rospy.Subscriber(joint_right_topic, JointControl, state.update_right_joint, queue_size=1)
         rospy.loginfo("[ws_bridge] Joint topics: left=%s  right=%s", joint_left_topic, joint_right_topic)
 
     rospy.spin()
@@ -193,10 +193,10 @@ def main():
                         help="Right arm PosCmd topic (default: /master2_pos_back)")
 
     # Joint topics
-    parser.add_argument("--joint_left_topic", type=str, default="/joint_information",
-                        help="Left arm JointInformation topic (default: /joint_information)")
-    parser.add_argument("--joint_right_topic", type=str, default="/joint_information2",
-                        help="Right arm JointInformation topic (default: /joint_information2)")
+    parser.add_argument("--joint_left_topic", type=str, default="/joint_control",
+                        help="Left arm JointControl topic (default: /joint_control)")
+    parser.add_argument("--joint_right_topic", type=str, default="/joint_control2",
+                        help="Right arm JointControl topic (default: /joint_control2)")
 
     args = parser.parse_args()
 
