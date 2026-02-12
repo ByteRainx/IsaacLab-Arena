@@ -81,10 +81,10 @@ parser.add_argument(
          "(direct joint positions, no IK, fastest).",
 )
 parser.add_argument(
-    "--joint_signs", type=str, default="1,1,1,1,1,1",
+    "--joint_signs", type=str, default="1,1,-1,-1,-1,-1",
     help="Per-joint sign multipliers (6 comma-separated values). "
-         "Use -1 to flip a joint axis. Example: '1,1,1,1,-1,1' to invert joint5. "
-         "Default: '1,1,1,1,1,1'",
+         "Use -1 to flip a joint axis. "
+         "Default: '1,1,-1,-1,-1,-1' (joints 3-6 inverted for ARX X5).",
 )
 parser.add_argument(
     "--joint_offsets", type=str, default="0,0,0,0,0,0",

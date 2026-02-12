@@ -85,14 +85,14 @@ class Ex001ArmWsRemoteCfg:
 
     # -- Joint mode mapping --------------------------------------------------
 
-    joint_signs: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+    joint_signs: tuple[float, ...] = (1.0, 1.0, -1.0, -1.0, -1.0, -1.0)
     """Per-joint sign multipliers (6 values, one per arm joint).
     Use ``-1.0`` to invert a joint's direction when the physical arm
     and the simulation model have opposite axis conventions.
 
-    Example: if simulation joint5 rotates opposite to physical joint5::
-
-        joint_signs = (1, 1, 1, 1, -1, 1)
+    Default ``(1, 1, -1, -1, -1, -1)`` matches the ARX X5 physical arm
+    against the ex001arm simulation USD model (joints 3-6 are inverted
+    due to URDF origin rotations during USD conversion).
     """
 
     joint_offsets: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
