@@ -1,26 +1,33 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""ROS1 → WebSocket 桥接脚本 (运行在机器人电脑 / Docker 容器内).
+"""ROS1 -> WebSocket bridge (runs on the robot PC / Docker container).
 
-订阅 master 臂的 PosCmd topic，通过 WebSocket 向仿真电脑实时推送
-末端执行器状态，供 IsaacLab-Arena 遥操作使用。
+Subscribes to master arm ROS1 topics and pushes state to the simulation PC
+via WebSocket for real-time teleoperation in IsaacLab-Arena.
 
-依赖:
-    pip install websockets   # (在 ROS1 / Docker 环境中安装)
+Supports three modes:
+    ee    -- End-effector only  (PosCmd topics)
+    joint -- Joint position only (JointInformation topics)
+    both  -- Both EE and joint data in one payload
 
-使用:
-    # 默认参数 (端口 5555, 50Hz 推送)
+Dependencies:
+    pip install websockets   # (inside the ROS1 / Docker environment)
+
+Usage:
+    # EE mode (default), 200 Hz
     python ros1_ws_bridge.py
 
-    # 自定义参数
-    python ros1_ws_bridge.py --port 8765 --hz 100
+    # Joint mode
+    python ros1_ws_bridge.py --mode joint
 
-    # Docker 运行时需要映射端口:
-    # docker run -p 5555:5555 ...
+    # Both, custom port
+    python ros1_ws_bridge.py --mode both --port 8765
 
-Topic 约定:
-    /master1_pos_back  ->  左臂 (arm_control/PosCmd)
-    /master2_pos_back  ->  右臂 (arm_control/PosCmd)
+Topic conventions (defaults):
+    /master1_pos_back   -> left arm  EE   (arm_control/PosCmd)
+    /master2_pos_back   -> right arm EE   (arm_control/PosCmd)
+    /joint_information  -> left arm  joints (arm_control/JointInformation)
+    /joint_information2 -> right arm joints (arm_control/JointInformation)
 """
 
 from __future__ import print_function
@@ -32,7 +39,6 @@ import threading
 import time
 
 import rospy
-from arm_control.msg import PosCmd
 
 
 # ---------------------------------------------------------------------------
@@ -43,28 +49,57 @@ class ArmState:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._left = None   # type: dict | None
-        self._right = None  # type: dict | None
+        # EE data (from PosCmd)
+        self._left_ee = None   # type: dict | None
+        self._right_ee = None  # type: dict | None
+        # Joint data (from JointInformation)
+        self._left_joint = None   # type: dict | None
+        self._right_joint = None  # type: dict | None
 
-    def update_left(self, msg):
+    # -- EE callbacks --
+    def update_left_ee(self, msg):
         with self._lock:
-            self._left = self._msg_to_dict(msg)
+            self._left_ee = self._poscmd_to_dict(msg)
 
-    def update_right(self, msg):
+    def update_right_ee(self, msg):
         with self._lock:
-            self._right = self._msg_to_dict(msg)
+            self._right_ee = self._poscmd_to_dict(msg)
 
-    def snapshot(self):
+    # -- Joint callbacks --
+    def update_left_joint(self, msg):
+        with self._lock:
+            self._left_joint = self._jointinfo_to_dict(msg)
+
+    def update_right_joint(self, msg):
+        with self._lock:
+            self._right_joint = self._jointinfo_to_dict(msg)
+
+    # -- Snapshot builders --
+    def snapshot(self, mode):
         """Return the latest state as a JSON-serialisable dict."""
         with self._lock:
+            left = {}
+            right = {}
+
+            if mode in ("ee", "both") and self._left_ee is not None:
+                left.update(self._left_ee)
+            if mode in ("ee", "both") and self._right_ee is not None:
+                right.update(self._right_ee)
+
+            if mode in ("joint", "both") and self._left_joint is not None:
+                left.update(self._left_joint)
+            if mode in ("joint", "both") and self._right_joint is not None:
+                right.update(self._right_joint)
+
             return {
                 "timestamp": time.time(),
-                "left": self._left,
-                "right": self._right,
+                "left": left if left else None,
+                "right": right if right else None,
             }
 
+    # -- Message converters --
     @staticmethod
-    def _msg_to_dict(msg):
+    def _poscmd_to_dict(msg):
         return {
             "x": msg.x,
             "y": msg.y,
@@ -77,46 +112,61 @@ class ArmState:
             "mode2": msg.mode2,
         }
 
+    @staticmethod
+    def _jointinfo_to_dict(msg):
+        return {
+            "joint_pos": list(msg.joint_pos),
+            "joint_vel": list(msg.joint_vel),
+        }
+
 
 # ---------------------------------------------------------------------------
 # ROS1 subscriber (runs in a background thread)
 # ---------------------------------------------------------------------------
-def ros_thread(state, left_topic, right_topic):
+def ros_thread(state, mode, ee_left_topic, ee_right_topic,
+               joint_left_topic, joint_right_topic):
     """Initialise ROS node and spin in a daemon thread."""
     rospy.init_node("ws_bridge", anonymous=True, disable_signals=True)
 
-    rospy.Subscriber(left_topic, PosCmd, state.update_left, queue_size=1)
-    rospy.Subscriber(right_topic, PosCmd, state.update_right, queue_size=1)
+    if mode in ("ee", "both"):
+        from arm_control.msg import PosCmd
+        rospy.Subscriber(ee_left_topic, PosCmd, state.update_left_ee, queue_size=1)
+        rospy.Subscriber(ee_right_topic, PosCmd, state.update_right_ee, queue_size=1)
+        rospy.loginfo("[ws_bridge] EE topics: left=%s  right=%s", ee_left_topic, ee_right_topic)
 
-    rospy.loginfo(
-        "[ws_bridge] Subscribing: left=%s  right=%s", left_topic, right_topic
-    )
+    if mode in ("joint", "both"):
+        from arm_control.msg import JointInformation
+        rospy.Subscriber(joint_left_topic, JointInformation, state.update_left_joint, queue_size=1)
+        rospy.Subscriber(joint_right_topic, JointInformation, state.update_right_joint, queue_size=1)
+        rospy.loginfo("[ws_bridge] Joint topics: left=%s  right=%s", joint_left_topic, joint_right_topic)
+
     rospy.spin()
 
 
 # ---------------------------------------------------------------------------
 # WebSocket server (main thread, asyncio)
 # ---------------------------------------------------------------------------
-async def ws_handler(websocket, state, hz):
+async def ws_handler(websocket, state, hz, mode):
     """Push arm state to a single connected client at *hz* frequency."""
     interval = 1.0 / hz
     peer = websocket.remote_address
     print(f"[ws_bridge] Client connected: {peer}")
     try:
         while True:
-            payload = json.dumps(state.snapshot())
+            payload = json.dumps(state.snapshot(mode))
             await websocket.send(payload)
             await asyncio.sleep(interval)
     except Exception:
         print(f"[ws_bridge] Client disconnected: {peer}")
 
 
-async def serve(state, port, hz):
+async def serve(state, port, hz, mode):
     import websockets
 
-    handler = lambda ws, path=None: ws_handler(ws, state, hz)
+    handler = lambda ws, path=None: ws_handler(ws, state, hz, mode)
     async with websockets.serve(handler, "0.0.0.0", port):
-        print(f"[ws_bridge] WebSocket server listening on 0.0.0.0:{port}  ({hz} Hz)")
+        print(f"[ws_bridge] WebSocket server listening on 0.0.0.0:{port}  "
+              f"(mode={mode}, {hz} Hz)")
         await asyncio.Future()  # run forever
 
 
@@ -125,18 +175,29 @@ async def serve(state, port, hz):
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="ROS1 PosCmd -> WebSocket bridge for remote teleoperation"
+        description="ROS1 -> WebSocket bridge for remote teleoperation"
     )
-    parser.add_argument("--port", type=int, default=5555, help="WebSocket port (default: 5555)")
-    parser.add_argument("--hz", type=int, default=50, help="Push frequency in Hz (default: 50)")
-    parser.add_argument(
-        "--left_topic", type=str, default="/master1_pos_back",
-        help="Left arm PosCmd topic (default: /master1_pos_back)",
-    )
-    parser.add_argument(
-        "--right_topic", type=str, default="/master2_pos_back",
-        help="Right arm PosCmd topic (default: /master2_pos_back)",
-    )
+    parser.add_argument("--port", type=int, default=5555,
+                        help="WebSocket port (default: 5555)")
+    parser.add_argument("--hz", type=int, default=200,
+                        help="Push frequency in Hz (default: 200)")
+    parser.add_argument("--mode", type=str, default="ee",
+                        choices=["ee", "joint", "both"],
+                        help="Data mode: ee (EE pose), joint (joint angles), "
+                             "both (EE + joint). Default: ee")
+
+    # EE topics
+    parser.add_argument("--left_topic", type=str, default="/master1_pos_back",
+                        help="Left arm PosCmd topic (default: /master1_pos_back)")
+    parser.add_argument("--right_topic", type=str, default="/master2_pos_back",
+                        help="Right arm PosCmd topic (default: /master2_pos_back)")
+
+    # Joint topics
+    parser.add_argument("--joint_left_topic", type=str, default="/joint_information",
+                        help="Left arm JointInformation topic (default: /joint_information)")
+    parser.add_argument("--joint_right_topic", type=str, default="/joint_information2",
+                        help="Right arm JointInformation topic (default: /joint_information2)")
+
     args = parser.parse_args()
 
     state = ArmState()
@@ -144,7 +205,9 @@ def main():
     # Start ROS in a daemon thread
     t = threading.Thread(
         target=ros_thread,
-        args=(state, args.left_topic, args.right_topic),
+        args=(state, args.mode,
+              args.left_topic, args.right_topic,
+              args.joint_left_topic, args.joint_right_topic),
         daemon=True,
     )
     t.start()
@@ -154,7 +217,7 @@ def main():
 
     # Run WebSocket server in main thread
     try:
-        asyncio.run(serve(state, args.port, args.hz))
+        asyncio.run(serve(state, args.port, args.hz, args.mode))
     except KeyboardInterrupt:
         print("\n[ws_bridge] Shutting down.")
 

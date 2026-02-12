@@ -4,14 +4,22 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Remote WebSocket teleoperation device for EX001Arm.
+"""Remote WebSocket teleoperation device for EX001Arm (EE + Joint modes).
 
-Receives end-effector states from a remote machine (robot PC) over WebSocket,
-computes frame-to-frame delta poses, and outputs 14D action tensors compatible
-with IsaacLab-Arena's ``EX001ArmActionsCfg`` (DifferentialIK).
+Receives arm states from a remote machine (robot PC) over WebSocket and
+outputs action tensors for IsaacLab-Arena.
+
+**Two control modes:**
+
+* ``ee``    -- End-effector delta mode.  Computes frame-to-frame delta
+  poses from ``PosCmd`` data and outputs 14D tensors for
+  ``DifferentialInverseKinematicsActionCfg``.
+* ``joint`` -- Joint position direct mode.  Passes through absolute joint
+  positions from ``JointInformation`` data and outputs 14D tensors for
+  ``JointPositionActionCfg``.
 
 The remote machine runs ``tools/ros1_ws_bridge.py`` which subscribes to
-ROS1 ``PosCmd`` topics and forwards the data via WebSocket.
+ROS1 topics and forwards the data via WebSocket.
 
 Requirements (simulation PC only):
     pip install websocket-client
@@ -24,7 +32,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -53,12 +61,15 @@ class Ex001ArmWsRemoteCfg:
     sim_device: str | None = None
     """Torch device string for the output tensor (e.g. ``"cuda:0"``)."""
 
+    control_mode: str = "ee"
+    """Control mode: ``"ee"`` (end-effector delta) or ``"joint"`` (joint
+    position direct).  Must match the bridge ``--mode`` setting."""
+
     pos_scale: float = 1.0
-    """Scale factor for position deltas. Increase if sim arm moves too little,
-    decrease if it moves too much."""
+    """(EE mode only) Scale factor for position deltas."""
 
     rot_scale: float = 1.0
-    """Scale factor for rotation deltas."""
+    """(EE mode only) Scale factor for rotation deltas."""
 
     gripper_max: float = _MASTER_GRIPPER_MAX
     """Physical master gripper value when fully open."""
@@ -74,28 +85,29 @@ class Ex001ArmWsRemoteCfg:
 
 
 class Ex001ArmWsRemoteTeleop:
-    """Remote bimanual teleop device that receives EE states via WebSocket.
+    """Remote bimanual teleop device that receives arm states via WebSocket.
 
-    Implements the same interface as
-    :class:`~isaaclab_arena.scripts.teleop_bimanual_keyboard.BimanualSe3Keyboard`:
+    Implements the same interface used by other teleop devices:
 
     * ``advance() -> torch.Tensor``  (14-dim action)
     * ``reset() -> None``
     * ``add_callback(key, func) -> None``
 
-    **Output layout (14D)**::
+    **EE mode output layout (14D)**::
 
         [left_dx, left_dy, left_dz, left_drx, left_dry, left_drz, left_grip,
          right_dx, right_dy, right_dz, right_drx, right_dry, right_drz, right_grip]
 
-    * Position delta: difference between consecutive EE positions (metres)
-    * Rotation delta: rotation vector from consecutive Euler-angle frames
-    * Gripper: ``-1`` (closed) to ``+1`` (open)
+    **Joint mode output layout (14D)**::
+
+        [left_j1, left_j2, left_j3, left_j4, left_j5, left_j6, left_grip,
+         right_j1, right_j2, right_j3, right_j4, right_j5, right_j6, right_grip]
     """
 
     def __init__(self, cfg: Ex001ArmWsRemoteCfg):
         self.cfg = cfg
         self._sim_device = cfg.sim_device
+        self._control_mode = cfg.control_mode
         self._additional_callbacks: dict[str, Callable[[], None]] = {}
 
         # Latest state received from WebSocket (written by bg thread)
@@ -103,9 +115,12 @@ class Ex001ArmWsRemoteTeleop:
         self._latest: dict | None = None
         self._connected = False
 
-        # Previous EE poses for delta computation
+        # Previous EE poses for delta computation (EE mode only)
         self._prev_left: np.ndarray | None = None   # [x,y,z,roll,pitch,yaw]
         self._prev_right: np.ndarray | None = None
+
+        # Debug counter
+        self._debug_counter = 0
 
         # Start background receiver thread
         self._ws = None
@@ -118,9 +133,8 @@ class Ex001ArmWsRemoteTeleop:
         self._setup_keyboard_listener()
 
         logger.info(
-            "WS remote teleop: connecting to ws://%s:%d",
-            cfg.remote_ip,
-            cfg.remote_port,
+            "WS remote teleop (%s mode): connecting to ws://%s:%d",
+            cfg.control_mode, cfg.remote_ip, cfg.remote_port,
         )
 
     # ------------------------------------------------------------------
@@ -181,8 +195,9 @@ class Ex001ArmWsRemoteTeleop:
 
     def __str__(self) -> str:
         status = "connected" if self._connected else "disconnected"
+        mode_label = self._control_mode.upper()
         lines = [
-            f"WS Remote Teleop (EE mode): {self.__class__.__name__}",
+            f"WS Remote Teleop ({mode_label} mode): {self.__class__.__name__}",
             f"\tRemote    : ws://{self.cfg.remote_ip}:{self.cfg.remote_port}",
             f"\tStatus    : {status}",
             "\t----------------------------------------------",
@@ -199,7 +214,17 @@ class Ex001ArmWsRemoteTeleop:
         self._additional_callbacks[key] = func
 
     def advance(self) -> torch.Tensor:
-        """Read latest remote state and return 14D EE delta action."""
+        """Read latest remote state and return 14D action tensor."""
+        if self._control_mode == "joint":
+            return self._advance_joint()
+        return self._advance_ee()
+
+    # ------------------------------------------------------------------
+    # EE mode
+    # ------------------------------------------------------------------
+
+    def _advance_ee(self) -> torch.Tensor:
+        """Compute 14D EE delta action from PosCmd data."""
         with self._lock:
             state = self._latest
 
@@ -209,6 +234,10 @@ class Ex001ArmWsRemoteTeleop:
 
         left = state["left"]
         right = state["right"]
+
+        # Check that EE fields are present
+        if "x" not in left or "x" not in right:
+            return torch.zeros(14, dtype=torch.float32, device=self._sim_device)
 
         # Extract current poses [x, y, z, roll, pitch, yaw]
         left_pose = np.array(
@@ -241,20 +270,71 @@ class Ex001ArmWsRemoteTeleop:
         self._prev_right = right_pose.copy()
 
         # Gripper: 0 (close) ~ 4.5 (open) -> -1 (close) ~ +1 (open)
-        left_grip = self._normalize_gripper(left["gripper"])
-        right_grip = self._normalize_gripper(right["gripper"])
+        left_grip = self._normalize_gripper(left.get("gripper", 0.0))
+        right_grip = self._normalize_gripper(right.get("gripper", 0.0))
 
-        # Debug: print data periodically
+        # Debug
         if self.cfg.debug:
-            self._debug_counter = getattr(self, "_debug_counter", 0) + 1
-            if self._debug_counter % 50 == 0:  # every ~1s at 50Hz
+            self._debug_counter += 1
+            if self._debug_counter % 50 == 0:
                 print(
-                    f"[WS Debug] L_grip_raw={left['gripper']:.2f} -> {left_grip:.2f}  "
-                    f"R_grip_raw={right['gripper']:.2f} -> {right_grip:.2f}  "
-                    f"L_delta_pos={np.linalg.norm(left_delta[:3]):.5f}"
+                    f"[EE Debug] L_grip_raw={left.get('gripper', 0):.2f} -> {left_grip:.2f}  "
+                    f"R_grip_raw={right.get('gripper', 0):.2f} -> {right_grip:.2f}  "
+                    f"L_dpos={np.linalg.norm(left_delta[:3]):.5f}  "
+                    f"R_dpos={np.linalg.norm(right_delta[:3]):.5f}"
                 )
 
         cmd = np.concatenate([left_delta, [left_grip], right_delta, [right_grip]])
+        return torch.tensor(cmd, dtype=torch.float32, device=self._sim_device)
+
+    # ------------------------------------------------------------------
+    # Joint mode
+    # ------------------------------------------------------------------
+
+    def _advance_joint(self) -> torch.Tensor:
+        """Return 14D absolute joint position action from JointInformation data.
+
+        Layout: [left_j1..j6, left_gripper, right_j1..j6, right_gripper]
+
+        ``joint_pos`` from the bridge is a 7-element array where indices
+        0-5 are joint angles and index 6 is the gripper joint position.
+        These values are passed through directly with no transformation.
+        """
+        with self._lock:
+            state = self._latest
+
+        # No data yet -> zero action
+        if state is None or state.get("left") is None or state.get("right") is None:
+            return torch.zeros(14, dtype=torch.float32, device=self._sim_device)
+
+        left = state["left"]
+        right = state["right"]
+
+        # Check that joint fields are present
+        if "joint_pos" not in left or "joint_pos" not in right:
+            return torch.zeros(14, dtype=torch.float32, device=self._sim_device)
+
+        left_jp = np.array(left["joint_pos"], dtype=np.float64)
+        right_jp = np.array(right["joint_pos"], dtype=np.float64)
+
+        # joint_pos[0:6] = joint angles, joint_pos[6] = gripper
+        left_joints = left_jp[:6]
+        left_grip = left_jp[6] if len(left_jp) > 6 else 0.0
+        right_joints = right_jp[:6]
+        right_grip = right_jp[6] if len(right_jp) > 6 else 0.0
+
+        # Debug
+        if self.cfg.debug:
+            self._debug_counter += 1
+            if self._debug_counter % 50 == 0:
+                print(
+                    f"[Joint Debug] L_joints={np.round(left_joints, 3).tolist()}  "
+                    f"L_grip={left_grip:.3f}  "
+                    f"R_joints={np.round(right_joints, 3).tolist()}  "
+                    f"R_grip={right_grip:.3f}"
+                )
+
+        cmd = np.concatenate([left_joints, [left_grip], right_joints, [right_grip]])
         return torch.tensor(cmd, dtype=torch.float32, device=self._sim_device)
 
     # ------------------------------------------------------------------

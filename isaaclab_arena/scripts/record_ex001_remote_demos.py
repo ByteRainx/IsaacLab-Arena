@@ -6,18 +6,24 @@
 
 """Record demonstrations for EX001Arm using remote physical arms via WebSocket.
 
-The remote machine runs ``tools/ros1_ws_bridge.py`` to forward ROS1 PosCmd
-data over WebSocket. This script receives the data and drives the simulation.
+The remote machine runs ``tools/ros1_ws_bridge.py`` to forward ROS1 arm data
+over WebSocket. This script receives the data and drives the simulation.
+
+Supports two control modes:
+
+* ``ee``    -- End-effector delta (DifferentialIK, default)
+* ``joint`` -- Direct joint position (fastest, no IK)
 
 Usage::
 
-    # Start bridge on the robot PC first:
-    #   python ros1_ws_bridge.py --port 5555
-
-    # Then on the simulation PC:
+    # EE mode (default)
     python -m isaaclab_arena.scripts.record_ex001_remote_demos \\
-        --embodiment ex001arm --task stack \\
-        --remote_ip 192.168.1.100 --remote_port 5555
+        --remote_ip 10.100.21.249 ex001arm_cvpr_scene_put_blocks_to_color
+
+    # Joint mode (recommended for same-model physical arms)
+    python -m isaaclab_arena.scripts.record_ex001_remote_demos \\
+        --control_mode joint --remote_ip 10.100.21.249 \\
+        ex001arm_cvpr_scene_put_blocks_to_color
 """
 
 # ── Pre-simulation imports & AppLauncher ──────────────────────────────────────
@@ -58,10 +64,6 @@ parser.add_argument(
     help="WebSocket port on the robot PC. Default: 5555",
 )
 parser.add_argument(
-    "--teleop_hz", type=int, default=50,
-    help="Teleoperation loop frequency in Hz. Default: 50",
-)
-parser.add_argument(
     "--pos_scale", type=float, default=1.0,
     help="Scale factor for position deltas. Increase if sim moves too little. Default: 1.0",
 )
@@ -73,8 +75,11 @@ parser.add_argument(
     "--debug", action="store_true",
     help="Print gripper and delta values periodically for debugging.",
 )
-
-DEFAULT_STEP_HZ = 30
+parser.add_argument(
+    "--control_mode", type=str, default="ee", choices=["ee", "joint"],
+    help="Control mode: 'ee' (end-effector delta, default) or 'joint' "
+         "(direct joint positions, no IK, fastest).",
+)
 
 add_example_environments_cli_args(parser)
 
@@ -95,24 +100,6 @@ from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
-
-class RateLimiter:
-    def __init__(self, hz: int):
-        self.hz = hz
-        self.last_time = time.time()
-        self.sleep_duration = 1.0 / hz
-        self.render_period = min(0.033, self.sleep_duration)
-
-    def sleep(self, env: gym.Env):
-        next_wakeup_time = self.last_time + self.sleep_duration
-        while time.time() < next_wakeup_time:
-            time.sleep(self.render_period)
-            env.sim.render()
-        self.last_time += self.sleep_duration
-        if self.last_time < time.time():
-            while self.last_time < time.time():
-                self.last_time += self.sleep_duration
-
 
 @dataclass
 class AutoResetState:
@@ -220,12 +207,15 @@ def create_teleop_interface(env):
         remote_ip=args_cli.remote_ip,
         remote_port=args_cli.remote_port,
         sim_device=str(env.device),
+        control_mode=args_cli.control_mode,
         pos_scale=args_cli.pos_scale,
         rot_scale=args_cli.rot_scale,
         debug=args_cli.debug,
     )
     teleop = Ex001ArmWsRemoteTeleop(cfg)
-    print(f"[INFO] Using remote WebSocket teleop: ws://{args_cli.remote_ip}:{args_cli.remote_port}")
+    mode_label = args_cli.control_mode.upper()
+    print(f"[INFO] Using remote WebSocket teleop ({mode_label} mode): "
+          f"ws://{args_cli.remote_ip}:{args_cli.remote_port}")
     return teleop
 
 
@@ -239,10 +229,15 @@ def main() -> None:
         omni.log.error(f"Failed to parse environment configuration: {e}")
         exit(1)
 
-    # --- Use 1:1 scale action config for physical arm teleop --------
-    from isaaclab_arena.embodiments.ex001arm.ex001arm import EX001ArmPhysicalTeleopActionsCfg
-    env_cfg.actions = EX001ArmPhysicalTeleopActionsCfg()
-    print("[INFO] Using EX001ArmPhysicalTeleopActionsCfg (IK scale=1.0, 1:1 mapping)")
+    # --- Select action config based on control mode -----------------
+    if args_cli.control_mode == "joint":
+        from isaaclab_arena.embodiments.ex001arm.ex001arm import EX001ArmJointActionsCfg
+        env_cfg.actions = EX001ArmJointActionsCfg()
+        print("[INFO] Using EX001ArmJointActionsCfg (direct joint position, no IK)")
+    else:
+        from isaaclab_arena.embodiments.ex001arm.ex001arm import EX001ArmPhysicalTeleopActionsCfg
+        env_cfg.actions = EX001ArmPhysicalTeleopActionsCfg()
+        print("[INFO] Using EX001ArmPhysicalTeleopActionsCfg (IK scale=1.0, 1:1 mapping)")
 
     # Success / termination handling
     success_term = None
@@ -264,7 +259,7 @@ def main() -> None:
         os.makedirs(output_dir)
         print(f"Created output directory: {output_dir}")
 
-    device_tag = "arx_remote_ee"
+    device_tag = f"arx_remote_{args_cli.control_mode}"
 
     def _next_available_filename() -> str:
         base_prefix = f"{device_tag}_episode"
@@ -363,8 +358,6 @@ def main() -> None:
 
     teleop_interface.add_callback("R", request_reset)
 
-    rate_limiter = RateLimiter(args_cli.teleop_hz)
-
     # Initial setup
     env.sim.reset()
     env.reset()
@@ -374,8 +367,8 @@ def main() -> None:
     print(f"Using teleop device:\n{teleop_interface}")
     print("=" * 60)
     print(f"[INFO] Output directory : {output_dir}")
+    print(f"[INFO] Control mode     : {args_cli.control_mode}")
     print(f"[INFO] Reset duration   : {reset_duration}s")
-    print(f"[INFO] Teleop frequency : {args_cli.teleop_hz} Hz")
     print(f"[INFO] Remote           : ws://{args_cli.remote_ip}:{args_cli.remote_port}")
     print("[INFO] One trajectory per HDF5 file")
     print("[INFO] Press 'R' to reset (no export)")
@@ -443,7 +436,8 @@ def main() -> None:
             if env.sim.is_stopped():
                 break
 
-            rate_limiter.sleep(env)
+            # Render each frame (no artificial rate limiting -- run at max sim speed)
+            env.sim.render()
 
     env.close()
     print(f"Recording session completed with {recorded_demos} demonstrations")
