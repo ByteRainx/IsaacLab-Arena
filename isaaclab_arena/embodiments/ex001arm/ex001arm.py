@@ -269,19 +269,19 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
                 stiffness=80.0,
                 damping=8.0,
             ),
-            # Left gripper actuator
+            # Left gripper actuator (high stiffness for snappy response)
             "left_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["left_arm_gripper"],
                 effort_limit_sim=200.0,
-                stiffness=40.0,
-                damping=15.0,
+                stiffness=200.0,
+                damping=8.0,
             ),
-            # Right gripper actuator
+            # Right gripper actuator (high stiffness for snappy response)
             "right_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["right_arm_gripper"],
                 effort_limit_sim=200.0,
-                stiffness=40.0,
-                damping=15.0,
+                stiffness=200.0,
+                damping=8.0,
             ),
         },
     )
