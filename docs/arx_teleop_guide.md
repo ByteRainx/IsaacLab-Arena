@@ -1,202 +1,213 @@
-# ARX 方舟臂遥操作集成指南
+# EX001Arm 远程遥操作指南 (WebSocket)
 
 ## 概述
 
-本模块通过 [arx5-sdk](https://github.com/yihuai-gao/arx5-sdk) 的 CAN 总线直连方式，将物理 ARX X5 双臂接入 IsaacLab-Arena 仿真平台，实现实时遥操作数据采集。**不依赖 ROS2**。
+通过 WebSocket 实现双机远程遥操作数据采集。机器人电脑读取物理臂状态并通过网络发送，仿真电脑接收后驱动 Isaac Sim 中的 ex001arm 模型。
 
-支持两种控制模式：
+```
+┌────────────────────────────────────┐           ┌──────────────────────────────┐
+│       机器人电脑 (Docker/ROS1)      │   网线     │      仿真电脑 (Isaac Sim)     │
+│                                    │           │                              │
+│  物理双臂 → ROS1 PosCmd topics     │           │                              │
+│       ↓                            │           │                              │
+│  ros1_ws_bridge.py                 │  ──────►  │  Ex001ArmWsRemoteTeleop      │
+│  (订阅topic → WebSocket推送)        │  ws://    │  (接收 → 计算delta → 14D)    │
+│                                    │  :5555    │         ↓                    │
+│  pip install websockets            │           │     Isaac Sim 仿真环境        │
+│                                    │           │  pip install websocket-client │
+└────────────────────────────────────┘           └──────────────────────────────┘
+```
 
-| 模式 | 说明 | 仿真端 Action 配置 | 适用场景 |
-|------|------|---------------------|----------|
-| `ee` (末端执行器) | 读取物理臂 EEF 位姿，计算帧间 delta pose | `EX001ArmActionsCfg` (DifferentialIK) | 精细操作、与 VR/键盘数据格式一致 |
-| `joint` (关节位置) | 直接读取物理臂关节角度（弧度） | `EX001ArmJointActionsCfg` (AbsoluteJointPosition) | 关节级精确复现、无 IK 误差 |
+## 数据流
 
-## 新增/修改文件清单
+1. 物理臂通过 CAN 总线发布 ROS1 topic (`/master1_pos_back`, `/master2_pos_back`)
+2. 桥接脚本订阅 topic，以 50Hz 推送 JSON 到 WebSocket
+3. 仿真端接收 JSON，计算帧间 delta 位姿
+4. DifferentialIK 控制器驱动仿真臂跟随
+
+## ROS1 消息格式
+
+| Topic | 消息类型 | 说明 |
+|-------|----------|------|
+| `/master1_pos_back` | `arm_control/PosCmd` | 左臂 (master1) |
+| `/master2_pos_back` | `arm_control/PosCmd` | 右臂 (master2) |
+
+`PosCmd` 字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `x`, `y`, `z` | float | 末端位置 (米) |
+| `roll`, `pitch`, `yaw` | float | 末端姿态 (Euler 角, 弧度) |
+| `gripper` | float | 夹爪开合 (0=闭合, 4.5=张开) |
+| `mode1`, `mode2` | int | 模式标志 |
+
+发布频率：200Hz
+
+## 文件清单
 
 ```
 IsaacLab-Arena/
+├── tools/
+│   └── ros1_ws_bridge.py              # 机器人电脑端 (ROS1 → WebSocket)
 ├── isaaclab_arena/
 │   ├── teleop_devices/
-│   │   ├── __init__.py                          # [修改] 添加新模块导入
-│   │   └── ex001arm_arx_bimanual.py             # [新增] ARX 双臂遥操作设备类
+│   │   ├── __init__.py                # 已更新导入
+│   │   └── ex001arm_ws_remote.py      # 仿真端 WebSocket 遥操作设备
 │   ├── embodiments/ex001arm/
-│   │   └── ex001arm.py                          # [修改] 新增 EX001ArmJointActionsCfg
+│   │   └── ex001arm.py                # 含 EX001ArmJointActionsCfg (备用)
 │   └── scripts/
-│       └── record_ex001_arx_demos.py            # [新增] ARX 遥操作录制脚本
+│       └── record_ex001_remote_demos.py  # 远程录制脚本
 └── docs/
-    └── arx_teleop_guide.md                      # [新增] 本文档
+    └── arx_teleop_guide.md            # 本文档
 ```
 
 ## 环境准备
 
-### 1. 硬件连接
-
-将两个 USB-CAN 适配器分别连接左臂和右臂，确认系统识别到 CAN 接口：
+### 机器人电脑 (Docker 容器内)
 
 ```bash
-ip link show | grep can
+# 安装 WebSocket 库
+pip install websockets
+
+# 将 ros1_ws_bridge.py 复制到容器内 (或挂载)
+# 确保 arm_control 消息包已编译并在 ROS 环境中
 ```
 
-### 2. 激活 CAN 接口
-
-每次插入 USB-CAN 适配器或系统重启后，需要执行：
+Docker 运行时需要映射端口：
 
 ```bash
-sudo ip link set up can0 type can bitrate 1000000
-sudo ip link set up can1 type can bitrate 1000000
+docker run -p 5555:5555 ...
+# 或在 docker-compose.yml 中添加:
+# ports:
+#   - "5555:5555"
 ```
 
-> 默认约定：`can0` = 左臂，`can1` = 右臂。可通过 CLI 参数 `--left_interface` / `--right_interface` 调整。
-
-### 3. arx5-sdk 安装
-
-确保 arx5-sdk 已编译并将 Python 绑定路径加入环境变量：
+### 仿真电脑
 
 ```bash
-# 根据实际安装路径调整
-export PYTHONPATH=$PYTHONPATH:/path/to/arx5-sdk/python
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/path/to/arx5-sdk/lib/x86_64
+# 在 Isaac Sim Python 环境中安装
+pip install websocket-client
 ```
 
-建议将上述两行添加到 `~/.bashrc` 或 Isaac Sim 的启动脚本中。
+### 网络配置
 
-### 4. 验证 arx5-sdk 可用
+两台电脑需要在同一局域网中能互相访问：
 
 ```bash
-python -c "from arx5_interface import Arx5JointController; print('arx5-sdk OK')"
+# 在仿真电脑上测试连通性
+ping <机器人电脑IP>
+
+# 测试端口是否可达 (桥接启动后)
+python -c "import websocket; ws = websocket.create_connection('ws://<IP>:5555'); print('OK'); ws.close()"
 ```
 
-### 5. pynput（可选，用于键盘回调）
+## 使用步骤
+
+### 1. 启动机器人端
 
 ```bash
-pip install pynput
+# 进入 Docker 容器
+dexec
+
+# 先确保 ROS master 和机械臂节点已运行
+# 然后启动桥接脚本
+python ros1_ws_bridge.py --port 5555 --hz 50
 ```
 
-## 使用方式
+看到以下输出表示成功：
+```
+[ws_bridge] Subscribing: left=/master1_pos_back  right=/master2_pos_back
+[ws_bridge] WebSocket server listening on 0.0.0.0:5555  (50 Hz)
+```
 
-### 基本命令
+### 2. 启动仿真端
 
 ```bash
-# EE 模式（默认）
-python -m isaaclab_arena.scripts.record_ex001_arx_demos \
+python -m isaaclab_arena.scripts.record_ex001_remote_demos \
     --embodiment ex001arm \
-    --task <task_name> \
-    --control_mode ee
-
-# 关节模式
-python -m isaaclab_arena.scripts.record_ex001_arx_demos \
-    --embodiment ex001arm \
-    --task <task_name> \
-    --control_mode joint
+    --task stack \
+    --remote_ip <机器人电脑IP> \
+    --remote_port 5555
 ```
 
-### 完整参数列表
+### 3. 操作
+
+- 脚本启动后自动开始录制
+- 手动操作物理臂，仿真臂实时跟随
+- 按 `R` 重置环境（不导出数据）
+- 任务成功后自动导出 HDF5 + 重置
+- `Ctrl+C` 结束
+
+## 完整参数列表
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--arx_model` | `X5` | ARX 机械臂型号（X5 / L5 / X7） |
-| `--left_interface` | `can0` | 左臂 CAN 总线接口 |
-| `--right_interface` | `can1` | 右臂 CAN 总线接口 |
-| `--control_mode` | `ee` | 控制模式：`ee` 或 `joint` |
-| `--teleop_hz` | `50` | 遥操作循环频率（Hz） |
-| `--dataset_file` | `./demos` | 数据集输出路径 |
-| `--reset_duration` | `10.0` | 自动重置轨迹时长（秒） |
+| `--remote_ip` | `192.168.1.100` | 机器人电脑 IP |
+| `--remote_port` | `5555` | WebSocket 端口 |
+| `--teleop_hz` | `50` | 遥操作频率 (Hz) |
+| `--dataset_file` | `./demos` | 数据输出目录 |
+| `--reset_duration` | `10.0` | 自动重置时长 (秒) |
 
-### 示例
+桥接脚本参数：
 
-```bash
-# 使用 X5 双臂，EE 模式，30Hz，输出到 ./my_data
-python -m isaaclab_arena.scripts.record_ex001_arx_demos \
-    --embodiment ex001arm \
-    --task stack \
-    --control_mode ee \
-    --teleop_hz 30 \
-    --dataset_file ./my_data
-
-# 使用关节模式
-python -m isaaclab_arena.scripts.record_ex001_arx_demos \
-    --embodiment ex001arm \
-    --task stack \
-    --control_mode joint
-```
-
-## 操作流程
-
-1. **启动前**：确认 CAN 接口已激活、双臂已上电
-2. **启动脚本**：运行上述命令，等待 Isaac Sim 窗口打开
-3. **开始录制**：脚本启动后自动进入录制状态，物理臂处于 damping 模式（可自由拖拽）
-4. **执行任务**：手动拖拽物理臂完成任务，仿真中的机械臂会实时跟随
-5. **重置**：按键盘 `R` 重置环境（不导出数据）
-6. **自动导出**：当任务成功检测触发后，系统自动等待 2 秒 → 执行重置轨迹 → 导出 HDF5 文件
-7. **结束**：按 `Ctrl+C` 退出
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--port` | `5555` | WebSocket 监听端口 |
+| `--hz` | `50` | 推送频率 (Hz) |
+| `--left_topic` | `/master1_pos_back` | 左臂 PosCmd topic |
+| `--right_topic` | `/master2_pos_back` | 右臂 PosCmd topic |
 
 ## 数据输出
 
-每条轨迹保存为独立的 HDF5 文件，命名格式：
+每条轨迹保存为独立 HDF5 文件：
 
-- EE 模式: `arx_ee_episode0.hdf5`, `arx_ee_episode1.hdf5`, ...
-- 关节模式: `arx_joint_episode0.hdf5`, `arx_joint_episode1.hdf5`, ...
+```
+demos/
+├── arx_remote_ee_episode0.hdf5
+├── arx_remote_ee_episode1.hdf5
+└── ...
+```
 
 ## 技术细节
 
 ### 14D 动作张量格式
-
-**EE 模式** (与 VR/键盘格式完全一致)：
 
 ```
 [left_dx, left_dy, left_dz, left_drx, left_dry, left_drz, left_grip,
  right_dx, right_dy, right_dz, right_drx, right_dry, right_drz, right_grip]
 ```
 
-- 位置 delta：当前帧与上一帧 EEF 位置之差（米）
-- 旋转 delta：旋转向量（axis-angle），由前后帧旋转矩阵差计算
-- 夹爪：`-1`（闭合）到 `+1`（张开）
+- 位置 delta：当前帧与上一帧 EE 位置之差（米）
+- 旋转 delta：从连续 Euler 角帧计算旋转向量（`R_curr * R_prev^-1 → rotvec`）
+- 夹爪：`-1`（闭合）到 `+1`（张开），由 `gripper / 4.5 * 2 - 1` 映射
 
-**关节模式**：
+### WebSocket 协议
 
+JSON 格式，每帧推送：
+
+```json
+{
+  "timestamp": 1234567890.123,
+  "left": {
+    "x": 0.3, "y": 0.0, "z": 0.4,
+    "roll": 0.0, "pitch": 1.57, "yaw": 0.0,
+    "gripper": 2.0, "mode1": 0, "mode2": 0
+  },
+  "right": {
+    "x": 0.3, "y": 0.0, "z": 0.4,
+    "roll": 0.0, "pitch": 1.57, "yaw": 0.0,
+    "gripper": 2.0, "mode1": 0, "mode2": 0
+  }
+}
 ```
-[left_j1, left_j2, left_j3, left_j4, left_j5, left_j6, left_gripper,
- right_j1, right_j2, right_j3, right_j4, right_j5, right_j6, right_gripper]
-```
-
-- 关节角度：弧度值，直接来自 arx5-sdk
-- 夹爪：`0.0`（闭合）到 `5.0`（张开），由物理夹爪米值线性映射
-
-### 关节映射关系
-
-| arx5-sdk (X5 URDF) | 仿真 (ex001arm USD) | 说明 |
-|---------------------|---------------------|------|
-| `joint1` | `left/right_arm_joint1` | 基座旋转 |
-| `joint2` | `left/right_arm_joint2` | 肩部 |
-| `joint3` | `left/right_arm_joint3` | 肘部 |
-| `joint4` | `left/right_arm_joint4` | 腕部1 |
-| `joint5` | `left/right_arm_joint5` | 腕部2 |
-| `joint6` | `left/right_arm_joint6` | 腕部3 |
-| `gripper_pos` (0~0.088m) | `left/right_arm_gripper` (0~5.0) | 夹爪 |
-
-两者均为从基座到末端的顺序，索引一一对应。
-
-### 夹爪映射公式
-
-```
-# EE 模式: 物理值 → 归一化
-normalized = clip(gripper_pos / gripper_width, 0, 1) * 2 - 1
-# 结果范围: -1 (闭合) → +1 (张开)
-
-# 关节模式: 物理值 → 仿真关节值
-joint_val = clip(gripper_pos / gripper_width, 0, 1) * 5.0
-# 结果范围: 0.0 (闭合) → 5.0 (张开)
-```
-
-`gripper_width` 从 arx5-sdk 的 `RobotConfig` 动态读取（X5 = 0.088m）。
 
 ## 故障排查
 
 | 问题 | 可能原因 | 解决方法 |
 |------|----------|----------|
-| `arx5_interface not found` | arx5-sdk 未安装或未加入 PYTHONPATH | 检查 `export PYTHONPATH` 设置 |
-| `Network is down` (CAN) | CAN 接口未激活 | 执行 `sudo ip link set up canX ...` |
-| 仿真臂不动 | CAN 接口名称错误 | 检查 `--left_interface` / `--right_interface` |
-| 物理臂拖不动 | damping 过高 | 减小 `damping_scale`（默认 0.1，可尝试 0.05） |
-| EE 模式漂移 | 坐标系不对齐 | 确认物理臂基座朝向与仿真一致 |
-| 关节模式抖动 | 关节限位冲突 | 确认物理臂工作范围在仿真关节限位内 |
+| `Connection refused` | 桥接脚本未启动或端口未映射 | 检查 Docker 端口映射 `-p 5555:5555` |
+| `[WS Teleop] Disconnected` | 网络断开 | 设备会自动重连，检查网线/IP |
+| 仿真臂不动 | 桥接收不到 ROS topic | 在容器内 `rostopic echo /master1_pos_back` 确认有数据 |
+| 仿真臂漂移 | 坐标系不对齐 | 确认物理臂基座朝向与仿真一致 |
+| 数据是 None | 机器人节点未启动 | 先启动 ctrl1 再启动桥接脚本 |
+| 延迟过高 | 网络带宽不足或 Hz 设过高 | 降低 `--hz`，使用千兆网线 |

@@ -4,30 +4,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Record demonstrations for EX001Arm using physical ARX arms via CAN bus.
+"""Record demonstrations for EX001Arm using remote physical arms via WebSocket.
 
-This script is based on ``record_ex001_demos.py`` but replaces the
-keyboard / VR teleop device with :class:`Ex001ArmArxBimanualTeleop`
-which reads from two physical ARX arms through arx5-sdk.
+The remote machine runs ``tools/ros1_ws_bridge.py`` to forward ROS1 PosCmd
+data over WebSocket. This script receives the data and drives the simulation.
 
-Supports two control modes:
+Usage::
 
-- ``ee``  : End-effector delta-pose (DifferentialIK).
-- ``joint``: Absolute joint positions.
+    # Start bridge on the robot PC first:
+    #   python ros1_ws_bridge.py --port 5555
 
-Usage example::
-
-    # Activate CAN interfaces first
-    sudo ip link set up can0 type can bitrate 1000000
-    sudo ip link set up can1 type can bitrate 1000000
-
-    # EE mode (default)
-    python -m isaaclab_arena.scripts.record_ex001_arx_demos \\
-        --embodiment ex001arm --task stack --control_mode ee
-
-    # Joint mode
-    python -m isaaclab_arena.scripts.record_ex001_arx_demos \\
-        --embodiment ex001arm --task stack --control_mode joint
+    # Then on the simulation PC:
+    python -m isaaclab_arena.scripts.record_ex001_remote_demos \\
+        --embodiment ex001arm --task stack \\
+        --remote_ip 192.168.1.100 --remote_port 5555
 """
 
 # ── Pre-simulation imports & AppLauncher ──────────────────────────────────────
@@ -48,53 +38,31 @@ from isaaclab_arena.examples.example_environments.cli import (
 
 parser = get_isaaclab_arena_cli_parser()
 
-# ── Standard recording args (same as record_ex001_demos.py) ───────────────
+# ── Standard recording args ──────────────────────────────────────────────────
 parser.add_argument(
-    "--dataset_file",
-    type=str,
-    default="",
+    "--dataset_file", type=str, default="",
     help="File path or directory to export recorded demos. Defaults to ./demos",
 )
 parser.add_argument(
-    "--reset_duration",
-    type=float,
-    default=10.0,
+    "--reset_duration", type=float, default=10.0,
     help="Duration of reset trajectory in seconds. Default: 10.0",
 )
 
-# ── ARX-specific args ────────────────────────────────────────────────────────
+# ── Remote (WebSocket) args ──────────────────────────────────────────────────
 parser.add_argument(
-    "--arx_model",
-    type=str,
-    default="X5",
-    help="ARX arm model identifier (X5, L5, X7, …). Default: X5",
+    "--remote_ip", type=str, default="192.168.1.100",
+    help="IP address of the robot PC running ros1_ws_bridge.py",
 )
 parser.add_argument(
-    "--left_interface",
-    type=str,
-    default="can0",
-    help="CAN bus interface for the left arm. Default: can0",
+    "--remote_port", type=int, default=5555,
+    help="WebSocket port on the robot PC. Default: 5555",
 )
 parser.add_argument(
-    "--right_interface",
-    type=str,
-    default="can1",
-    help="CAN bus interface for the right arm. Default: can1",
-)
-parser.add_argument(
-    "--control_mode",
-    type=str,
-    default="ee",
-    choices=["ee", "joint"],
-    help="Control mode: 'ee' for end-effector delta pose, 'joint' for absolute "
-    "joint positions. Default: ee",
-)
-parser.add_argument(
-    "--teleop_hz",
-    type=int,
-    default=50,
+    "--teleop_hz", type=int, default=50,
     help="Teleoperation loop frequency in Hz. Default: 50",
 )
+
+DEFAULT_STEP_HZ = 30
 
 add_example_environments_cli_args(parser)
 
@@ -114,11 +82,9 @@ from isaaclab.managers import DatasetExportMode
 from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul
 
 
-# ── Utilities (shared with record_ex001_demos.py) ─────────────────────────────
+# ── Utilities ─────────────────────────────────────────────────────────────────
 
 class RateLimiter:
-    """Fixed-rate limiter that renders during idle time."""
-
     def __init__(self, hz: int):
         self.hz = hz
         self.last_time = time.time()
@@ -202,7 +168,6 @@ def _compute_reset_action(
     pos_gain: float = 0.3,
     rot_gain: float = 0.3,
 ) -> torch.Tensor:
-    """Compute action to move EE towards home position."""
     action = torch.zeros(expected_action_dim, device=env.device)
     if auto_reset.home_left_ee_pos is None:
         return action
@@ -234,28 +199,24 @@ def _compute_reset_action(
 # ── Teleop device creation ────────────────────────────────────────────────────
 
 def create_teleop_interface(env):
-    """Instantiate the ARX bimanual teleop device."""
-    from isaaclab_arena.teleop_devices.ex001arm_arx_bimanual import (
-        Ex001ArmArxBimanualCfg,
-        Ex001ArmArxBimanualTeleop,
+    from isaaclab_arena.teleop_devices.ex001arm_ws_remote import (
+        Ex001ArmWsRemoteCfg,
+        Ex001ArmWsRemoteTeleop,
     )
 
-    cfg = Ex001ArmArxBimanualCfg(
-        model=args_cli.arx_model,
-        left_interface=args_cli.left_interface,
-        right_interface=args_cli.right_interface,
-        control_mode=args_cli.control_mode,
+    cfg = Ex001ArmWsRemoteCfg(
+        remote_ip=args_cli.remote_ip,
+        remote_port=args_cli.remote_port,
         sim_device=str(env.device),
     )
-    teleop = Ex001ArmArxBimanualTeleop(cfg)
-    print(f"[INFO] Using ARX teleop device: mode={args_cli.control_mode}")
+    teleop = Ex001ArmWsRemoteTeleop(cfg)
+    print(f"[INFO] Using remote WebSocket teleop: ws://{args_cli.remote_ip}:{args_cli.remote_port}")
     return teleop
 
 
-# ── Main loop ─────────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    # Parse environment configuration
     try:
         arena_builder = get_arena_builder_from_cli(args_cli)
         env_name, env_cfg = arena_builder.build_registered()
@@ -263,14 +224,7 @@ def main() -> None:
         omni.log.error(f"Failed to parse environment configuration: {e}")
         exit(1)
 
-    # --- Override action config when in joint mode ------------------------
-    if args_cli.control_mode == "joint":
-        from isaaclab_arena.embodiments.ex001arm.ex001arm import EX001ArmJointActionsCfg
-
-        env_cfg.actions = EX001ArmJointActionsCfg()
-        print("[INFO] Using joint position action config (absolute joint positions)")
-
-    # --- Success / termination handling -----------------------------------
+    # Success / termination handling
     success_term = None
     if hasattr(env_cfg.terminations, "success"):
         success_term = env_cfg.terminations.success
@@ -279,41 +233,36 @@ def main() -> None:
     env_cfg.terminations.time_out = None
     env_cfg.observations.policy.concatenate_terms = False
 
-    # --- Output directory -------------------------------------------------
+    # Output directory
     dataset_path = args_cli.dataset_file or "./demos"
     dataset_ext = os.path.splitext(dataset_path)[1]
     is_dir_path = dataset_path.endswith(os.sep) or dataset_ext == ""
 
-    if is_dir_path:
-        output_dir = dataset_path.rstrip(os.sep) or "."
-    else:
-        output_dir = os.path.dirname(dataset_path) or "."
+    output_dir = (dataset_path.rstrip(os.sep) or ".") if is_dir_path else (os.path.dirname(dataset_path) or ".")
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         print(f"Created output directory: {output_dir}")
 
-    device_tag = f"arx_{args_cli.control_mode}"
+    device_tag = "arx_remote_ee"
 
     def _next_available_filename() -> str:
         base_prefix = f"{device_tag}_episode"
         index = 0
         while True:
             candidate = f"{base_prefix}{index}"
-            candidate_path = os.path.join(output_dir, f"{candidate}.hdf5")
-            if not os.path.exists(candidate_path):
+            if not os.path.exists(os.path.join(output_dir, f"{candidate}.hdf5")):
                 return candidate
             index += 1
 
     current_output_file_name = _next_available_filename()
     current_output_path = os.path.join(output_dir, f"{current_output_file_name}.hdf5")
 
-    # --- Configure recorder -----------------------------------------------
+    # Recorder
     env_cfg.recorders = ActionStateRecorderManagerCfg()
     print("[INFO] Recording actions and states only (no images)")
 
-    camera_obs_keys = ["left_wrist_cam", "right_wrist_cam", "head_cam", "robot_pov_cam_rgb"]
-    for cam_key in camera_obs_keys:
+    for cam_key in ["left_wrist_cam", "right_wrist_cam", "head_cam", "robot_pov_cam_rgb"]:
         if hasattr(env_cfg.observations.policy, cam_key):
             delattr(env_cfg.observations.policy, cam_key)
             print(f"[INFO] Removed {cam_key} from observations")
@@ -322,7 +271,7 @@ def main() -> None:
     env_cfg.recorders.dataset_filename = current_output_file_name
     env_cfg.recorders.dataset_export_mode = DatasetExportMode.EXPORT_ALL
 
-    # --- Create environment -----------------------------------------------
+    # Create environment
     try:
         env = gym.make(env_name, cfg=env_cfg).unwrapped
     except Exception as e:
@@ -332,43 +281,37 @@ def main() -> None:
     expected_action_dim = _get_expected_action_dim(env) or env.action_space.shape[-1]
     teleop_interface = create_teleop_interface(env)
 
-    # --- State variables --------------------------------------------------
+    # State
     should_reset = False
     recorded_demos = 0
     auto_reset = AutoResetState()
     reset_duration = args_cli.reset_duration
-    running_recording = True  # ARX teleop starts recording immediately
+    running_recording = True  # start recording immediately
 
-    def _store_home_ee_poses() -> None:
-        left_pos, left_quat, right_pos, right_quat = _get_ee_poses(env)
-        auto_reset.home_left_ee_pos = left_pos
-        auto_reset.home_left_ee_quat = left_quat
-        auto_reset.home_right_ee_pos = right_pos
-        auto_reset.home_right_ee_quat = right_quat
+    def _store_home_ee_poses():
+        lp, lq, rp, rq = _get_ee_poses(env)
+        auto_reset.home_left_ee_pos = lp
+        auto_reset.home_left_ee_quat = lq
+        auto_reset.home_right_ee_pos = rp
+        auto_reset.home_right_ee_quat = rq
 
-    def export_and_prepare_next() -> None:
+    def export_and_prepare_next():
         nonlocal recorded_demos, current_output_file_name, current_output_path
         nonlocal running_recording
 
         env.recorder_manager.record_pre_reset([0], force_export_or_skip=False)
         env.recorder_manager.export_episodes([0])
-
         recorded_demos += 1
         print(f"[{recorded_demos}] Demo exported to: {current_output_path}")
 
-        if (
-            hasattr(env.recorder_manager, "_dataset_file_handler")
-            and env.recorder_manager._dataset_file_handler is not None
-        ):
+        if hasattr(env.recorder_manager, "_dataset_file_handler") and env.recorder_manager._dataset_file_handler is not None:
             env.recorder_manager._dataset_file_handler.close()
 
         current_output_file_name = _next_available_filename()
         current_output_path = os.path.join(output_dir, f"{current_output_file_name}.hdf5")
 
         env.recorder_manager.cfg.dataset_filename = current_output_file_name
-        env.recorder_manager._dataset_file_handler = (
-            env.recorder_manager.cfg.dataset_file_handler_class_type()
-        )
+        env.recorder_manager._dataset_file_handler = env.recorder_manager.cfg.dataset_file_handler_class_type()
         env.recorder_manager._dataset_file_handler.create(
             os.path.join(output_dir, current_output_file_name),
             env_name=getattr(env.cfg, "env_name", None),
@@ -385,7 +328,7 @@ def main() -> None:
         print(f"[INFO] Ready for next trajectory: {current_output_file_name}.hdf5")
         print("=" * 60)
 
-    def reset_only() -> None:
+    def reset_only():
         env.sim.reset()
         env.recorder_manager.reset([0])
         env.reset()
@@ -394,7 +337,7 @@ def main() -> None:
         auto_reset.clear()
         print("[INFO] Environment reset (no export).")
 
-    def request_reset() -> None:
+    def request_reset():
         nonlocal should_reset
         should_reset = True
 
@@ -402,7 +345,7 @@ def main() -> None:
 
     rate_limiter = RateLimiter(args_cli.teleop_hz)
 
-    # --- Initialise -------------------------------------------------------
+    # Initial setup
     env.sim.reset()
     env.reset()
     teleop_interface.reset()
@@ -413,34 +356,29 @@ def main() -> None:
     print(f"[INFO] Output directory : {output_dir}")
     print(f"[INFO] Reset duration   : {reset_duration}s")
     print(f"[INFO] Teleop frequency : {args_cli.teleop_hz} Hz")
-    print(f"[INFO] Control mode     : {args_cli.control_mode}")
-    print(f"[INFO] ARX model        : {args_cli.arx_model}")
+    print(f"[INFO] Remote           : ws://{args_cli.remote_ip}:{args_cli.remote_port}")
     print("[INFO] One trajectory per HDF5 file")
     print("[INFO] Press 'R' to reset (no export)")
     print("=" * 60)
 
-    # --- Main control loop ------------------------------------------------
+    # Main loop
     with contextlib.suppress(KeyboardInterrupt) and torch.inference_mode():
         while simulation_app.is_running():
-            # Compute action
             if auto_reset.active:
-                device_action = _compute_reset_action(
-                    env, auto_reset, expected_action_dim, reset_duration
-                )
+                device_action = _compute_reset_action(env, auto_reset, expected_action_dim, reset_duration)
             elif auto_reset.done_pending_export:
                 device_action = torch.zeros(expected_action_dim, device=env.device)
             else:
                 action = teleop_interface.advance()
                 device_action = _map_action_dim(action, expected_action_dim)
 
-            # Step environment
             should_step = running_recording or auto_reset.active or auto_reset.done_pending_export
             if should_step:
                 env.step(device_action.repeat(env.num_envs, 1))
             else:
                 env.sim.render()
 
-            # Detect success
+            # Success detection
             if (
                 running_recording
                 and not auto_reset.success_pending_reset
@@ -454,7 +392,6 @@ def main() -> None:
                 auto_reset.success_lock = True
                 print(f"[INFO] Success! Waiting 2s then {reset_duration}s reset trajectory...")
 
-            # Start auto reset after wait
             if auto_reset.success_pending_reset and auto_reset.success_wait_start is not None:
                 if time.time() - auto_reset.success_wait_start >= 2.0:
                     auto_reset.active = True
@@ -464,7 +401,6 @@ def main() -> None:
                     auto_reset.success_pending_reset = False
                     auto_reset.success_wait_start = None
 
-            # Check reset completion
             if auto_reset.active and auto_reset.start_time is not None:
                 if time.time() - auto_reset.start_time >= reset_duration:
                     auto_reset.active = False
@@ -472,7 +408,6 @@ def main() -> None:
                     auto_reset.export_wait_steps = 2
                     auto_reset.start_time = None
 
-            # Export after wait steps
             if auto_reset.done_pending_export and not auto_reset.active:
                 if should_step and auto_reset.export_wait_steps > 0:
                     auto_reset.export_wait_steps -= 1
@@ -481,7 +416,6 @@ def main() -> None:
                     auto_reset.done_pending_export = False
                     auto_reset.success_lock = False
 
-            # Handle manual reset
             if should_reset:
                 reset_only()
                 should_reset = False
