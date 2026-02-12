@@ -53,6 +53,13 @@ class Ex001ArmWsRemoteCfg:
     sim_device: str | None = None
     """Torch device string for the output tensor (e.g. ``"cuda:0"``)."""
 
+    pos_scale: float = 1.0
+    """Scale factor for position deltas. Increase if sim arm moves too little,
+    decrease if it moves too much."""
+
+    rot_scale: float = 1.0
+    """Scale factor for rotation deltas."""
+
     gripper_max: float = _MASTER_GRIPPER_MAX
     """Physical master gripper value when fully open."""
 
@@ -61,6 +68,9 @@ class Ex001ArmWsRemoteCfg:
 
     reconnect_interval: float = 2.0
     """Seconds between reconnection attempts when the link is down."""
+
+    debug: bool = False
+    """Print incoming data periodically for debugging."""
 
 
 class Ex001ArmWsRemoteTeleop:
@@ -218,9 +228,14 @@ class Ex001ArmWsRemoteTeleop:
         if self._prev_right is None:
             self._prev_right = right_pose.copy()
 
-        # Compute deltas
+        # Compute deltas and apply scale
         left_delta = self._compute_pose_delta(self._prev_left, left_pose)
         right_delta = self._compute_pose_delta(self._prev_right, right_pose)
+
+        left_delta[:3] *= self.cfg.pos_scale
+        left_delta[3:] *= self.cfg.rot_scale
+        right_delta[:3] *= self.cfg.pos_scale
+        right_delta[3:] *= self.cfg.rot_scale
 
         self._prev_left = left_pose.copy()
         self._prev_right = right_pose.copy()
@@ -228,6 +243,16 @@ class Ex001ArmWsRemoteTeleop:
         # Gripper: 0 (close) ~ 4.5 (open) -> -1 (close) ~ +1 (open)
         left_grip = self._normalize_gripper(left["gripper"])
         right_grip = self._normalize_gripper(right["gripper"])
+
+        # Debug: print data periodically
+        if self.cfg.debug:
+            self._debug_counter = getattr(self, "_debug_counter", 0) + 1
+            if self._debug_counter % 50 == 0:  # every ~1s at 50Hz
+                print(
+                    f"[WS Debug] L_grip_raw={left['gripper']:.2f} -> {left_grip:.2f}  "
+                    f"R_grip_raw={right['gripper']:.2f} -> {right_grip:.2f}  "
+                    f"L_delta_pos={np.linalg.norm(left_delta[:3]):.5f}"
+                )
 
         cmd = np.concatenate([left_delta, [left_grip], right_delta, [right_grip]])
         return torch.tensor(cmd, dtype=torch.float32, device=self._sim_device)

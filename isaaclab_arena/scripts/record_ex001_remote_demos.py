@@ -61,6 +61,18 @@ parser.add_argument(
     "--teleop_hz", type=int, default=50,
     help="Teleoperation loop frequency in Hz. Default: 50",
 )
+parser.add_argument(
+    "--pos_scale", type=float, default=1.0,
+    help="Scale factor for position deltas. Increase if sim moves too little. Default: 1.0",
+)
+parser.add_argument(
+    "--rot_scale", type=float, default=1.0,
+    help="Scale factor for rotation deltas. Default: 1.0",
+)
+parser.add_argument(
+    "--debug", action="store_true",
+    help="Print gripper and delta values periodically for debugging.",
+)
 
 DEFAULT_STEP_HZ = 30
 
@@ -208,6 +220,9 @@ def create_teleop_interface(env):
         remote_ip=args_cli.remote_ip,
         remote_port=args_cli.remote_port,
         sim_device=str(env.device),
+        pos_scale=args_cli.pos_scale,
+        rot_scale=args_cli.rot_scale,
+        debug=args_cli.debug,
     )
     teleop = Ex001ArmWsRemoteTeleop(cfg)
     print(f"[INFO] Using remote WebSocket teleop: ws://{args_cli.remote_ip}:{args_cli.remote_port}")
