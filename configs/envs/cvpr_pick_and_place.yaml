@@ -1,0 +1,46 @@
+# Environment: EX001Arm pick-and-place with CVPR 3DGS background
+# Calibrated from real-world 3DGS reconstruction
+
+env_id: cvpr_pick_and_place
+
+scene:
+  background:
+    asset: cvpr_background
+    pose:
+      position: [-1.0, -0.562, 0.0]
+      rotation: [0.04457, 0.0, 0.0, -0.999]   # wxyz
+
+  robot:
+    asset: ex001arm          # overridable via --embodiment
+    pose:
+      position: [-0.51676, -0.25918, -0.58061]
+      rotation: [1.0, 0.0, 0.0, 0.0]
+
+  lighting:
+    intensity: 1000.0
+    color: [1.0, 1.0, 1.0]
+    angle: 0.53
+
+  render:
+    wait_for_textures: true
+    render_interval: 1
+
+task:
+  type: pick_and_place       # maps to PickAndPlaceTask
+
+  target:
+    asset: cracker_box       # overridable via --object
+    pose:
+      position: [0.3, 0.0, -0.2]
+      rotation: [1.0, 0.0, 0.0, 0.0]
+    # Training randomization: sample within these bounds
+    workspace_bounds:
+      x: [0.15, 0.45]
+      y: [-0.25, 0.25]
+      yaw: [-0.5, 0.5]
+
+  destination:
+    asset: plate
+    pose:
+      position: [0.312, -0.286, -0.232]
+      rotation: [0.0, 0.0, 1.0, 0.0]

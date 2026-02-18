@@ -1,0 +1,37 @@
+# Environment: EX001Arm pick-and-place in kitchen scene
+# Destination is an ObjectReference (cabinet sub-prim)
+
+env_id: kitchen_pick_and_place
+
+scene:
+  background:
+    asset: kitchen
+    # Kitchen asset has its own coordinate origin; no offset needed
+    pose:
+      position: [0.0, 0.0, 0.0]
+      rotation: [1.0, 0.0, 0.0, 0.0]
+
+  robot:
+    asset: ex001arm
+    pose:
+      position: [-0.15242, 0.14933, -0.31697]
+      rotation: [0.99998, 0.0, 0.0, -0.00648]
+
+task:
+  type: pick_and_place
+
+  target:
+    asset: cracker_box
+    pose:
+      position: [0.4, 0.0, 0.1]
+      rotation: [1.0, 0.0, 0.0, 0.0]
+    workspace_bounds:
+      x: [0.25, 0.55]
+      y: [-0.2, 0.2]
+      z: [0.08, 0.12]
+
+  destination:
+    type: object_reference
+    name: destination_location
+    prim_path: "{ENV_REGEX_NS}/kitchen/Cabinet_B_02"
+    parent_asset: background

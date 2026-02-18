@@ -1,0 +1,81 @@
+# Real2Sim Evaluation Suite — CVPR Pick-and-Place
+#
+# Each episode defines exact object poses for reproducible evaluation.
+# Poses can come from:
+#   - Real-world AprilTag calibration
+#   - FoundationPose estimation from camera image
+#   - Manual measurement
+#
+# Usage:
+#   python -m manip_bench.scripts.eval_suite \
+#       --suite configs/eval/cvpr_pick_and_place_suite.yaml \
+#       --policy_type zero_action
+
+name: "CVPR Pick-and-Place Evaluation v1"
+env_config: configs/envs/cvpr_pick_and_place.yaml
+
+# Run each episode N times for statistical significance
+num_trials: 5
+
+# Maximum steps per trial before timeout
+max_steps: 500
+
+episodes:
+  # --- Nominal (calibrated default position) ---
+  - id: nominal
+    description: "Default calibrated position"
+    # No overrides → uses poses from env_config
+
+  # --- Position variations (simulating real-world placement variance) ---
+  - id: center_close
+    description: "Object closer to robot"
+    overrides:
+      target:
+        position: [0.2, 0.0, -0.2]
+
+  - id: center_far
+    description: "Object farther from robot"
+    overrides:
+      target:
+        position: [0.4, 0.0, -0.2]
+
+  - id: left_near
+    description: "Object to the left, near"
+    overrides:
+      target:
+        position: [0.25, 0.15, -0.2]
+
+  - id: right_near
+    description: "Object to the right, near"
+    overrides:
+      target:
+        position: [0.25, -0.15, -0.2]
+
+  - id: left_far
+    description: "Object to the left, far"
+    overrides:
+      target:
+        position: [0.4, 0.15, -0.2]
+
+  - id: right_far
+    description: "Object to the right, far"
+    overrides:
+      target:
+        position: [0.4, -0.15, -0.2]
+
+  - id: rotated_45
+    description: "Object rotated 45 degrees"
+    overrides:
+      target:
+        position: [0.3, 0.0, -0.2]
+        rotation: [0.924, 0.0, 0.0, 0.383]
+
+  # --- Real-world captured poses (example) ---
+  # - id: real_2026_02_19_ep01
+  #   description: "Captured via AprilTag, Feb 19 2026"
+  #   source: apriltag
+  #   timestamp: "2026-02-19T10:30:00"
+  #   overrides:
+  #     target:
+  #       position: [0.28, 0.03, -0.19]
+  #       rotation: [0.98, 0.0, 0.0, 0.19]

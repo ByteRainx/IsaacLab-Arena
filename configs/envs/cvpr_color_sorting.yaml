@@ -1,0 +1,52 @@
+# Environment: EX001Arm color-sorting with CVPR 3DGS background
+# Three colored bricks → matching paper destinations
+
+env_id: cvpr_color_sorting
+
+scene:
+  background:
+    asset: cvpr_background
+    pose:
+      position: [-1.0, -0.562, 0.0]
+      rotation: [0.04457, 0.0, 0.0, -0.999]
+
+  robot:
+    asset: ex001arm
+    pose:
+      position: [-0.51676, -0.25918, -0.58061]
+      rotation: [1.0, 0.0, 0.0, 0.0]
+
+  lighting:
+    intensity: 1000.0
+    color: [1.0, 1.0, 1.0]
+    angle: 0.53
+
+  render:
+    wait_for_textures: true
+    render_interval: 1
+
+task:
+  type: color_sorting        # maps to ThreeBlocksToColorTask
+
+  blocks:
+    - asset: yellow_brick
+      pose: { position: [0.05, -0.15, -0.15], rotation: [1.0, 0.0, 0.0, 0.0] }
+    - asset: green_brick
+      pose: { position: [0.05, 0.0, -0.15], rotation: [1.0, 0.0, 0.0, 0.0] }
+    - asset: red_brick
+      pose: { position: [0.05, 0.15, -0.15], rotation: [1.0, 0.0, 0.0, 0.0] }
+
+  destinations:
+    - asset: yellow_paper
+      pose: { position: [0.23565, 0.02566, -0.22092], rotation: [0.70711, 0.0, 0.0, 0.70711] }
+    - asset: green_paper
+      pose: { position: [0.23825, -0.29192, -0.22277], rotation: [0.70711, 0.0, 0.0, 0.70711] }
+    - asset: pink_paper
+      pose: { position: [0.24031, -0.60498, -0.22564], rotation: [0.70711, 0.0, 0.0, 0.70711] }
+
+  # Training randomization for block positions
+  randomize_blocks:
+    x: [0.0, 0.1]
+    y: [-0.7, 0.15]
+    z: -0.15
+    yaw: [-0.5, 0.5]

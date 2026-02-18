@@ -1,0 +1,38 @@
+# Real2Sim Evaluation Suite — CVPR Color Sorting
+#
+# Block positions are overridden per episode.
+# Destination (paper) positions are kept fixed (they don't move in reality).
+
+name: "CVPR Color Sorting Evaluation v1"
+env_config: configs/envs/cvpr_color_sorting.yaml
+
+num_trials: 3
+max_steps: 1000
+
+episodes:
+  - id: nominal
+    description: "Default positions from calibration"
+
+  - id: blocks_spread
+    description: "Blocks spread apart on the table"
+    overrides:
+      blocks:
+        - { position: [0.08, -0.3, -0.15] }
+        - { position: [0.08, 0.0, -0.15] }
+        - { position: [0.08, 0.3, -0.15] }
+
+  - id: blocks_clustered
+    description: "Blocks close together"
+    overrides:
+      blocks:
+        - { position: [0.05, -0.05, -0.15] }
+        - { position: [0.05, 0.0, -0.15] }
+        - { position: [0.05, 0.05, -0.15] }
+
+  - id: blocks_rotated
+    description: "Blocks with various rotations"
+    overrides:
+      blocks:
+        - { position: [0.05, -0.15, -0.15], rotation: [0.924, 0.0, 0.0, 0.383] }
+        - { position: [0.05, 0.0, -0.15], rotation: [0.707, 0.0, 0.0, 0.707] }
+        - { position: [0.05, 0.15, -0.15], rotation: [0.383, 0.0, 0.0, 0.924] }
