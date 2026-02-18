@@ -1,0 +1,14 @@
+# ManipBench keyboard teleoperation configuration
+
+env:
+  name: ex001arm_cvpr_scene_pick_and_place
+  num_envs: 1
+
+embodiment:
+  name: ex001arm_bimanual
+  enable_cameras: true
+
+record:
+  enabled: false
+  output_dir: ./recordings
+  format: hdf5

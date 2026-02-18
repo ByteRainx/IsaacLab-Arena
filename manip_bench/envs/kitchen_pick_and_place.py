@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+
+"""EX001Arm kitchen pick-and-place environment."""
+
+import argparse
+
+from isaaclab_arena.examples.example_environments.example_environment_base import (
+    ExampleEnvironmentBase,
+)
+
+
+class Ex001ArmKitchenPickAndPlaceEnvironment(ExampleEnvironmentBase):
+    """Kitchen pick-and-place task configured for EX001Arm."""
+
+    name: str = "ex001arm_kitchen_pick_and_place"
+
+    def get_env(self, args_cli: argparse.Namespace):  # -> IsaacLabArenaEnvironment:
+        import manip_bench.extensions  # noqa: F401  — register custom assets
+
+        from isaaclab_arena.assets.object_base import ObjectType
+        from isaaclab_arena.assets.object_reference import ObjectReference
+        from isaaclab_arena.environments.isaaclab_arena_environment import (
+            IsaacLabArenaEnvironment,
+        )
+        from isaaclab_arena.scene.scene import Scene
+        from isaaclab_arena.tasks.pick_and_place_task import PickAndPlaceTask
+        from isaaclab_arena.utils.pose import Pose
+
+        background = self.asset_registry.get_asset_by_name("kitchen")()
+        pick_up_object = self.asset_registry.get_asset_by_name(args_cli.object)()
+        
+        # Robot base position (also used as VR anchor for hand tracking alignment)
+        robot_initial_pos = (-0.15242, 0.14933, -0.31697)
+        robot_initial_rot = (0.99998, 0.0, 0.0, -0.00648) # wxyz quaternion
+        
+        embodiment = self.asset_registry.get_asset_by_name(
+            args_cli.embodiment
+        )(
+            enable_cameras=args_cli.enable_cameras,
+            xr_anchor_pos=robot_initial_pos,
+            xr_anchor_rot=robot_initial_rot,
+        )
+
+        if args_cli.teleop_device is not None:
+            teleop_device = self.device_registry.get_device_by_name(
+                args_cli.teleop_device
+            )()
+        else:
+            teleop_device = None
+
+        embodiment.set_initial_pose(
+            Pose(
+                position_xyz=robot_initial_pos,
+                rotation_wxyz=robot_initial_rot,
+            )
+        )
+
+        pick_up_object.set_initial_pose(
+            Pose(
+                position_xyz=(0.4, 0.0, 0.1),
+                rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
+            )
+        )
+
+        destination_location = ObjectReference(
+            name="destination_location",
+            prim_path="{ENV_REGEX_NS}/kitchen/Cabinet_B_02",
+            parent_asset=background,
+            object_type=ObjectType.RIGID,
+        )
+
+        scene = Scene(assets=[background, pick_up_object, destination_location])
+        isaaclab_arena_environment = IsaacLabArenaEnvironment(
+            name=self.name,
+            embodiment=embodiment,
+            scene=scene,
+            task=PickAndPlaceTask(pick_up_object, destination_location, background),
+            teleop_device=teleop_device,
+        )
+        return isaaclab_arena_environment
+
+    @staticmethod
+    def add_cli_args(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--object", type=str, default="cracker_box")
+        parser.add_argument("--embodiment", type=str, default="ex001arm")
+        parser.add_argument("--teleop_device", type=str, default=None)

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manip-bench"
+version = "0.1.0"
+description = "ManipBench: A Bimanual Manipulation Simulation Benchmark"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "torch>=2.0",
+    "h5py",
+    "pyyaml",
+    "tqdm",
+    "scipy",
+    "opencv-python",
+]
+
+[project.optional-dependencies]
+lerobot = ["lerobot>=0.3.0"]
+remote = ["websocket-client", "websockets", "msgpack", "msgpack-numpy"]
+all = ["manip-bench[lerobot,remote]"]
+
+[project.entry-points.manip_bench_extensions]
+embodiments = "manip_bench.extensions.embodiments"
+tasks = "manip_bench.extensions.tasks"
+scenes = "manip_bench.extensions.scenes"
+devices = "manip_bench.extensions.devices"
+policies = "manip_bench.extensions.policies"
+
+[tool.setuptools.packages.find]
+include = ["manip_bench*"]
+
+[tool.isort]
+profile = "black"
+
+[tool.pyright]
+reportMissingImports = false

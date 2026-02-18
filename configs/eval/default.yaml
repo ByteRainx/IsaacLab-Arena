@@ -1,0 +1,14 @@
+# ManipBench default evaluation configuration
+
+env:
+  name: ex001arm_cvpr_scene_put_blocks_to_color
+  num_envs: 1
+
+embodiment:
+  name: ex001arm_bimanual
+  enable_cameras: true
+
+eval:
+  num_episodes: 50
+  max_steps_per_episode: 500
+  record_video: true

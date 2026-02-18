@@ -1,0 +1,17 @@
+# ManipBench VR teleoperation configuration
+
+env:
+  name: ex001arm_cvpr_scene_pick_and_place
+  num_envs: 1
+
+embodiment:
+  name: ex001arm_bimanual
+  enable_cameras: true
+
+teleop:
+  device: ex001arm_openxr_bimanual
+
+record:
+  enabled: true
+  output_dir: ./recordings
+  format: hdf5
