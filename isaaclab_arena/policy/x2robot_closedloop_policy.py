@@ -4,8 +4,12 @@
 """
 X2Robot Desktop Closedloop Policy for IsaacLab-Arena
 
-This module integrates the x2robot_client (Desktop dual-arm) inference system
-with IsaacLab-Arena simulation. Only supports dual-arm control (left arm, right arm, grippers).
+This module integrates the x2robot inference server with IsaacLab-Arena simulation.
+Only supports dual-arm control (left arm, right arm, grippers).
+
+The WebSocket + msgpack protocol is kept self-contained so that IsaacLab-Arena
+has no dependency on the x2robot_client package. Only standard pip packages are
+required: websockets, msgpack, msgpack-numpy.
 """
 
 import base64
@@ -18,7 +22,6 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 
-# WebSocket client dependencies
 try:
     import msgpack
     import msgpack_numpy
@@ -37,41 +40,45 @@ from isaaclab_arena.policy.policy_base import PolicyBase
 
 
 class SimpleWebSocketClient:
-    """Simple WebSocket client for X2Robot inference server."""
+    """Self-contained WebSocket client compatible with x2robot inference server.
 
-    def __init__(self, address: str, port: int):
-        self.uri = f"ws://{address}:{port}"
+    Protocol (identical to x2robot_client.inference_client.RobotClient):
+      1. Connect via WebSocket
+      2. Server immediately sends metadata dict (msgpack-packed)
+      3. Client sends observation dict (msgpack-packed, with msgpack-numpy)
+      4. Server responds with action dict (msgpack-packed, with msgpack-numpy)
+    """
+
+    def __init__(self, uri: str):
+        self.uri = uri
         self.connection = None
         self.metadata = {}
 
     def connect_sync(self) -> dict:
-        """Connect to the server and receive metadata."""
         if not HAS_WEBSOCKETS:
             raise ImportError("websockets package is required. Install with: pip install websockets")
         if not HAS_MSGPACK:
-            raise ImportError("msgpack and msgpack-numpy are required. Install with: pip install msgpack msgpack-numpy")
+            raise ImportError(
+                "msgpack and msgpack-numpy are required. "
+                "Install with: pip install msgpack msgpack-numpy"
+            )
 
         self.connection = ws_connect(self.uri, max_size=None)
         metadata_bytes = self.connection.recv()
-        self.metadata = msgpack.unpackb(metadata_bytes, raw=False)
+        self.metadata = msgpack.unpackb(metadata_bytes)
         return self.metadata
 
     def predict_sync(self, observation: dict) -> dict:
-        """Send observation and receive action prediction."""
         if self.connection is None:
-            raise RuntimeError("Not connected to server. Call connect_sync() first.")
+            raise RuntimeError("Not connected. Call connect_sync() first.")
 
-        obs_bytes = msgpack.packb(observation, use_bin_type=True)
-        self.connection.send(obs_bytes)
-
+        self.connection.send(msgpack.packb(observation))
         response_bytes = self.connection.recv()
         if isinstance(response_bytes, str):
             raise RuntimeError(f"Server error: {response_bytes}")
-
-        return msgpack.unpackb(response_bytes, raw=False)
+        return msgpack.unpackb(response_bytes)
 
     def close(self):
-        """Close the connection."""
         if self.connection is not None:
             self.connection.close()
             self.connection = None
@@ -89,7 +96,7 @@ class X2RobotPolicyConfig:
     action_chunk_length: int = 4
     camera_left: str = "left_wrist_cam"
     camera_right: str = "right_wrist_cam"
-    camera_front: str = None
+    camera_front: str = "head_cam"
     target_image_size: tuple = (480, 640, 3)
 
 
@@ -138,7 +145,7 @@ class X2RobotClosedloopPolicy(PolicyBase):
         uri = f"ws://{address}:{port}"
 
         print(f"[X2RobotPolicy] Connecting to server at {uri}...")
-        self.client = SimpleWebSocketClient(address, port)
+        self.client = SimpleWebSocketClient(uri=uri)
         try:
             metadata = self.client.connect_sync()
             self._connected = True
@@ -162,6 +169,15 @@ class X2RobotClosedloopPolicy(PolicyBase):
         return base64.b64encode(encoded).decode('utf-8')
 
     def _collect_observations(self, observation: Dict[str, Any]) -> Dict[str, Any]:
+        """Collect observations in the new x2robot_client nested format.
+
+        Output format matches DesktopClient/EX001Client:
+          {
+            "state": {"follow1_pos": np.float32(7,), "follow2_pos": np.float32(7,), ...},
+            "views": {"camera_left": base64, "camera_front": base64, "camera_right": base64},
+            "instruction": np.array([str], dtype=object),
+          }
+        """
         policy_obs = observation.get("policy", {})
 
         def get_camera_base64(cam_name: Optional[str]) -> Optional[str]:
@@ -185,7 +201,6 @@ class X2RobotClosedloopPolicy(PolicyBase):
         camera_right = get_camera_base64(self.config.camera_right)
         camera_front = get_camera_base64(self.config.camera_front)
 
-        # If no front/head camera, create a black placeholder image
         if camera_front is None:
             h, w = self.config.target_image_size[:2]
             black_image = np.zeros((h, w, 3), dtype=np.uint8)
@@ -239,39 +254,48 @@ class X2RobotClosedloopPolicy(PolicyBase):
         )
 
         x2robot_obs = {
-            # Convert numpy arrays to lists for msgpack serialization
-            "ACTION_FOLLOW1_POS": follow1_pos.tolist(),
-            "ACTION_FOLLOW2_POS": follow2_pos.tolist(),
-            "instruction": self.config.instruction,
+            "state": {
+                "follow1_pos": follow1_pos,
+                "follow2_pos": follow2_pos,
+            },
+            "views": {
+                "camera_left": camera_left,
+                "camera_front": camera_front,
+                "camera_right": camera_right,
+            },
+            "instruction": np.array([self.config.instruction], dtype=np.object_),
         }
-
-        if camera_left is not None:
-            x2robot_obs["CAMERA_LEFT"] = camera_left
-        if camera_right is not None:
-            x2robot_obs["CAMERA_RIGHT"] = camera_right
-        if camera_front is not None:
-            x2robot_obs["CAMERA_FRONT"] = camera_front
 
         return x2robot_obs
 
     def _convert_action_to_tensor(self, response: Dict[str, Any]) -> torch.Tensor:
-        follow1 = response.get("FOLLOW1_POS") or response.get("FOLLOW1_JOINTS")
-        follow2 = response.get("FOLLOW2_POS") or response.get("FOLLOW2_JOINTS")
+        """Convert server response to action tensor.
+
+        New client returns lowercase keys (follow1_pos, follow2_pos, follow1_joints, ...)
+        and values may be numpy arrays (via msgpack_numpy).
+        """
+        if self.config.control_mode == "end_pose":
+            follow1 = response.get("follow1_pos")
+            follow2 = response.get("follow2_pos")
+        else:
+            follow1 = response.get("follow1_joints") or response.get("follow1_pos")
+            follow2 = response.get("follow2_joints") or response.get("follow2_pos")
 
         if follow1 is None or follow2 is None:
-            print(f"[X2RobotPolicy] Missing action keys: {response.keys()}")
+            print(f"[X2RobotPolicy] Missing action keys in response: {list(response.keys())}. "
+                  f"Response sample: { {k: type(v).__name__ for k, v in response.items()} }")
             return torch.zeros(
                 (self.config.action_horizon, self.action_dim),
                 dtype=torch.float32,
                 device=self.device,
             )
 
-        follow1 = np.array(follow1)
-        follow2 = np.array(follow2)
+        follow1 = np.asarray(follow1, dtype=np.float32)
+        follow2 = np.asarray(follow2, dtype=np.float32)
 
-        if len(follow1.shape) == 1:
+        if follow1.ndim == 1:
             follow1 = follow1.reshape(1, -1)
-        if len(follow2.shape) == 1:
+        if follow2.ndim == 1:
             follow2 = follow2.reshape(1, -1)
 
         action_np = np.concatenate([follow1, follow2], axis=-1)
@@ -301,7 +325,6 @@ class X2RobotClosedloopPolicy(PolicyBase):
         return action
 
     def _query_server(self, observation: Dict[str, Any]) -> torch.Tensor:
-        # Lazy connect on first query
         self._ensure_connected()
 
         x2robot_obs = self._collect_observations(observation)
@@ -310,6 +333,14 @@ class X2RobotClosedloopPolicy(PolicyBase):
             response = self.client.predict_sync(x2robot_obs)
         except Exception as e:
             print(f"[X2RobotPolicy] Inference failed: {e}")
+            return torch.zeros(
+                (self.num_envs, self.config.action_horizon, self.action_dim),
+                dtype=torch.float32,
+                device=self.device,
+            )
+
+        if "error" in response:
+            print(f"[X2RobotPolicy] Server returned error: {response['error']}")
             return torch.zeros(
                 (self.num_envs, self.config.action_horizon, self.action_dim),
                 dtype=torch.float32,
