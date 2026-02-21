@@ -477,7 +477,7 @@ class PlatformPink(LibraryObject):
     name = "platform_pink"
     tags = ["object"]
     usd_path = f"{_get_assets_root()}/hunyuan_assets/platform_pink/platform_pink_physics.usd"
-    scale = (0.001, 0.001, 0.001)
+    scale = (0.003, 0.003, 0.003)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
@@ -492,7 +492,7 @@ class PlatformWhite(LibraryObject):
     name = "platform_white"
     tags = ["object"]
     usd_path = f"{_get_assets_root()}/hunyuan_assets/platform_white/platform_white_physics.usd"
-    scale = (0.001, 0.001, 0.001)
+    scale = (0.003, 0.003, 0.003)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
@@ -507,7 +507,7 @@ class PlatformYellow(LibraryObject):
     name = "platform_yellow"
     tags = ["object"]
     usd_path = f"{_get_assets_root()}/hunyuan_assets/platform_yellow/platform_yellow_physics.usd"
-    scale = (0.001, 0.001, 0.001)
+    scale = (0.003, 0.003, 0.003)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
