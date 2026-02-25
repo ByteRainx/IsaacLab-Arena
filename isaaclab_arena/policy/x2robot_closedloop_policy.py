@@ -99,6 +99,19 @@ class X2RobotPolicyConfig:
     camera_front: str = "head_cam"
     target_image_size: tuple = (480, 640, 3)
 
+    # Observation keys for EE state -- defaults use base-frame observations
+    # that match real robot FK output.  Set to "eef_pos" / "eef_quat" /
+    # "gripper_pos" to fall back to world-frame observations.
+    obs_left_eef_pos_key: str = "eef_pos_base"
+    obs_left_eef_quat_key: str = "eef_quat_base"
+    obs_left_gripper_key: str = "gripper_pos_normalized"
+    obs_right_eef_pos_key: str = "right_eef_pos_base"
+    obs_right_eef_quat_key: str = "right_eef_quat_base"
+    obs_right_gripper_key: str = "right_gripper_pos_normalized"
+    # Quaternion convention of the observation pointed to by the keys above.
+    # "xyzw" for base-frame obs (already converted), "wxyz" for world-frame obs.
+    obs_quat_convention: str = "xyzw"
+
 
 class X2RobotClosedloopPolicy(PolicyBase):
     """Desktop dual-arm closedloop policy using X2Robot inference server."""
@@ -213,6 +226,8 @@ class X2RobotClosedloopPolicy(PolicyBase):
                 return x.cpu().numpy()
             return np.array(x)
 
+        quat_convention = self.config.obs_quat_convention
+
         def build_arm_state(eef_pos, eef_quat, gripper) -> np.ndarray:
             eef_pos = to_numpy(eef_pos)
             eef_quat = to_numpy(eef_quat)
@@ -227,6 +242,9 @@ class X2RobotClosedloopPolicy(PolicyBase):
                 eef_quat = eef_quat[0]
 
             if eef_quat is not None:
+                if quat_convention == "wxyz":
+                    # Isaac Lab wxyz -> scipy xyzw
+                    eef_quat = eef_quat[[1, 2, 3, 0]]
                 euler = Rotation.from_quat(eef_quat).as_euler('xyz')
             else:
                 euler = np.zeros(3)
@@ -242,15 +260,15 @@ class X2RobotClosedloopPolicy(PolicyBase):
             return np.concatenate([eef_pos, euler, [gripper_val]]).astype(np.float32)
 
         follow1_pos = build_arm_state(
-            policy_obs.get("eef_pos"),
-            policy_obs.get("eef_quat"),
-            policy_obs.get("gripper_pos"),
+            policy_obs.get(self.config.obs_left_eef_pos_key),
+            policy_obs.get(self.config.obs_left_eef_quat_key),
+            policy_obs.get(self.config.obs_left_gripper_key),
         )
 
         follow2_pos = build_arm_state(
-            policy_obs.get("right_eef_pos"),
-            policy_obs.get("right_eef_quat"),
-            policy_obs.get("right_gripper_pos"),
+            policy_obs.get(self.config.obs_right_eef_pos_key),
+            policy_obs.get(self.config.obs_right_eef_quat_key),
+            policy_obs.get(self.config.obs_right_gripper_key),
         )
 
         x2robot_obs = {

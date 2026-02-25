@@ -363,6 +363,12 @@ def main() -> None:
             delattr(env_cfg.observations.policy, cam_key)
             print(f"[INFO] Removed {cam_key} from observations")
 
+    base_frame_keys = ["eef_pos_base", "eef_quat_base", "right_eef_pos_base",
+                       "right_eef_quat_base", "gripper_pos_normalized", "right_gripper_pos_normalized"]
+    present = [k for k in base_frame_keys if hasattr(env_cfg.observations.policy, k)]
+    if present:
+        print(f"[INFO] Base-frame observations included in recording: {present}")
+
     env_cfg.recorders.dataset_export_dir_path = output_dir
     env_cfg.recorders.dataset_filename = current_output_file_name
     env_cfg.recorders.dataset_export_mode = DatasetExportMode.EXPORT_ALL

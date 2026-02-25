@@ -32,7 +32,16 @@ import isaaclab.sim as sim_utils
 from isaaclab_arena.assets.register import register_asset
 from isaaclab_arena.embodiments.embodiment_base import EmbodimentBase
 from isaaclab_arena.embodiments.ex001arm.actions import ContactLimitedGripperActionCfg
-from isaaclab_arena.embodiments.ex001arm.observations import ex001arm_left_gripper_pos, ex001arm_right_gripper_pos
+from isaaclab_arena.embodiments.ex001arm.observations import (
+    ex001arm_left_gripper_pos,
+    ex001arm_right_gripper_pos,
+    ex001arm_left_eef_pos_base,
+    ex001arm_left_eef_quat_base,
+    ex001arm_right_eef_pos_base,
+    ex001arm_right_eef_quat_base,
+    ex001arm_left_gripper_normalized,
+    ex001arm_right_gripper_normalized,
+)
 from isaaclab_arena.utils.pose import Pose
 
 
@@ -130,7 +139,13 @@ class EX001ArmSceneCfg:
 
     robot: ArticulationCfg = MISSING
 
-    # Left-arm end-effector frame transformer
+    # Left-arm end-effector frame transformer.
+    # NOTE(sim-real): The offset (0.154m along local X) defines the EE
+    # reference point relative to gripper_base_link.  This MUST match the
+    # real robot's FK output point.  If the real robot FK reports at
+    # gripper_base_link itself, set pos=[0, 0, 0].  The manaenv variant
+    # uses link6 as source with offset=[0, 0, 0.1034] -- verify which
+    # matches your hardware.
     ee_frame: FrameTransformerCfg = FrameTransformerCfg(
         prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_base_link",
         debug_vis=False,
@@ -138,7 +153,7 @@ class EX001ArmSceneCfg:
             FrameTransformerCfg.FrameCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_base_link",
                 name="end_effector",
-                offset=OffsetCfg(pos=[0.154, 0.0, 0.0]),
+                offset=OffsetCfg(pos=[0.0, 0.0, 0.0]),
             ),
             # FrameTransformerCfg.FrameCfg(
             #     prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_left_link",
@@ -153,7 +168,7 @@ class EX001ArmSceneCfg:
         ],
     )
 
-    # Right-arm end-effector frame transformer
+    # Right-arm end-effector frame transformer (same offset note as above).
     right_ee_frame: FrameTransformerCfg = FrameTransformerCfg(
         prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_base_link",
         debug_vis=False,
@@ -161,7 +176,7 @@ class EX001ArmSceneCfg:
             FrameTransformerCfg.FrameCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_base_link",
                 name="right_end_effector",
-                offset=OffsetCfg(pos=[0.154, 0.0, 0.0]),
+                offset=OffsetCfg(pos=[0.0, 0.0, 0.0]),
             ),
             # FrameTransformerCfg.FrameCfg(
             #     prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_left_link",
@@ -438,6 +453,32 @@ class EX001ArmObservationsCfg:
         right_eef_pos = ObsTerm(func=ee_frame_pos, params={"ee_frame_cfg": SceneEntityCfg("right_ee_frame")})
         right_eef_quat = ObsTerm(func=ee_frame_quat, params={"ee_frame_cfg": SceneEntityCfg("right_ee_frame")})
         right_gripper_pos = ObsTerm(func=ex001arm_right_gripper_pos, params={"asset_cfg": SceneEntityCfg("robot")})
+
+        # Base-frame EE observations (matches real robot FK output)
+        eef_pos_base = ObsTerm(
+            func=ex001arm_left_eef_pos_base,
+            params={"asset_cfg": SceneEntityCfg("robot"), "ee_frame_cfg": SceneEntityCfg("ee_frame")},
+        )
+        eef_quat_base = ObsTerm(
+            func=ex001arm_left_eef_quat_base,
+            params={"asset_cfg": SceneEntityCfg("robot"), "ee_frame_cfg": SceneEntityCfg("ee_frame")},
+        )
+        right_eef_pos_base = ObsTerm(
+            func=ex001arm_right_eef_pos_base,
+            params={"asset_cfg": SceneEntityCfg("robot"), "ee_frame_cfg": SceneEntityCfg("right_ee_frame")},
+        )
+        right_eef_quat_base = ObsTerm(
+            func=ex001arm_right_eef_quat_base,
+            params={"asset_cfg": SceneEntityCfg("robot"), "ee_frame_cfg": SceneEntityCfg("right_ee_frame")},
+        )
+        gripper_pos_normalized = ObsTerm(
+            func=ex001arm_left_gripper_normalized,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+        )
+        right_gripper_pos_normalized = ObsTerm(
+            func=ex001arm_right_gripper_normalized,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+        )
 
         # Left wrist camera observation
         left_wrist_cam = ObsTerm(
