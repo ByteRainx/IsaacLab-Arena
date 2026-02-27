@@ -289,10 +289,47 @@ class Bottom(LibraryObject):
 
 
 @register_asset
+class ButtonBlue(LibraryObject):
+    """A blue button from hunyuan assets."""
+
+    name = "button_blue"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/button_blue/button_blue_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
+class ButtonGreen(LibraryObject):
+    """A green button from hunyuan assets."""
+
+    name = "button_green"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/button_green/button_green_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
+class ButtonPink(LibraryObject):
+    """A pink button from hunyuan assets."""
+
+    name = "button_pink"
+    tags = ["object"]
+    usd_path = f"{_get_assets_root()}/hunyuan_assets/button_pink/button_pink_physics.usd"
+    scale = (0.001, 0.001, 0.001)
+
+    def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
+        super().__init__(prim_path=prim_path, initial_pose=initial_pose)
+
+
+@register_asset
 class Plate(LibraryObject):
-    """
-    A plate from hunyuan assets.
-    """
+    """A plate from hunyuan assets."""
 
     name = "plate"
     tags = ["object"]

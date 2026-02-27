@@ -362,8 +362,9 @@ def main() -> None:
     env_cfg.terminations.time_out = None
     env_cfg.observations.policy.concatenate_terms = False
 
-    # Output directory
-    dataset_path = args_cli.dataset_file or "./data"
+    # Output directory: ./data/<task_name>/ by default
+    task_name = getattr(args_cli, "example_environment", "default")
+    dataset_path = args_cli.dataset_file or os.path.join("./data", task_name)
     dataset_ext = os.path.splitext(dataset_path)[1]
     is_dir_path = dataset_path.endswith(os.sep) or dataset_ext == ""
 
@@ -458,6 +459,12 @@ def main() -> None:
         auto_reset.home_right_ee_pos = rp
         auto_reset.home_right_ee_quat = rq
 
+    def _clear_task_state():
+        """Clear task-specific persistent state (e.g. contact history) after env reset."""
+        for attr in ("_buttons_contact_history_state",):
+            if hasattr(env, attr):
+                getattr(env, attr).zero_()
+
     def export_and_prepare_next():
         """Export the current episode to a NEW HDF5 file and prepare for the next recording.
 
@@ -495,6 +502,7 @@ def main() -> None:
         env.reset()
         teleop_interface.reset()
         _store_home_ee_poses()
+        _clear_task_state()
 
         running_recording = True
         print("=" * 60)
@@ -512,6 +520,7 @@ def main() -> None:
         env.reset()
         teleop_interface.reset()
         _store_home_ee_poses()
+        _clear_task_state()
         auto_reset.clear()
         print("[INFO] Environment reset — recording discarded, no file written.")
 
@@ -526,6 +535,7 @@ def main() -> None:
     env.reset()
     teleop_interface.reset()
     _store_home_ee_poses()
+    _clear_task_state()
 
     # Auto-create 4-viewport layout: Perspective + Left Wrist + Head + Right Wrist
     # Viewport 1 (default, Perspective) and Viewport 2 are created by Isaac Sim.
