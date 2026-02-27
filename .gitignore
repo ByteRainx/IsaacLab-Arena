@@ -59,6 +59,13 @@ TAGS
 
 # outputs
 *outputs/
+*demos/
+*data/
+*lerobot_data/
+*videos/
+
+# OpenXR
+*openxr/
 
 # Training images
 *training_images/
