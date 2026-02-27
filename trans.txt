@@ -1,0 +1,8 @@
+cd /home/xr/yan/new/IsaacLab-Arena
+python isaaclab_arena/examples/policy_runner.py \
+  --policy_type x2robot_closedloop \
+  --x2robot_server_address 39.101.65.229 \
+  --x2robot_server_port 33051 \
+  --enable_cameras \
+  ex001arm_cvpr_scene_put_blocks_to_color \
+  --ee_to_joint

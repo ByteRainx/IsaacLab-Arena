@@ -47,7 +47,7 @@ parser = get_isaaclab_arena_cli_parser()
 # ── Standard recording args ──────────────────────────────────────────────────
 parser.add_argument(
     "--dataset_file", type=str, default="",
-    help="File path or directory to export recorded demos. Defaults to ./demos",
+    help="File path or directory to export recorded demos. Defaults to ./data",
 )
 parser.add_argument(
     "--reset_duration", type=float, default=10.0,
@@ -81,10 +81,10 @@ parser.add_argument(
          "(direct joint positions, no IK, fastest).",
 )
 parser.add_argument(
-    "--joint_signs", type=str, default="1,1,-1,-1,-1,-1",
+    "--joint_signs", type=str, default="1,1,-1,-1,-1,1",
     help="Per-joint sign multipliers (6 comma-separated values). "
          "Use -1 to flip a joint axis. "
-         "Default: '1,1,-1,-1,-1,-1' (joints 3-6 inverted for ARX X5).",
+         "Default: '1,1,-1,-1,-1,1' (joints 3-5 inverted for ARX X5, joint6 same).",
 )
 parser.add_argument(
     "--joint_offsets", type=str, default="0,0,0,0,0,0",
@@ -109,7 +109,40 @@ import torch
 import omni.log
 from isaaclab.envs.mdp.recorders.recorders_cfg import ActionStateRecorderManagerCfg
 from isaaclab.managers import DatasetExportMode
+from isaaclab.managers.recorder_manager import RecorderTerm, RecorderTermCfg
+from isaaclab.utils import configclass
 from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul
+
+
+# ── Camera observation recorder (same as replay_and_record_demos.py) ─────────
+
+class _PreStepCameraRecorder(RecorderTerm):
+    """Record camera observations from the policy obs buffer each step."""
+
+    def record_pre_step(self):
+        camera_data = {}
+        if "camera_obs" in self._env.obs_buf:
+            return "camera_obs", self._env.obs_buf["camera_obs"]
+        if "policy" in self._env.obs_buf:
+            policy_obs = self._env.obs_buf["policy"]
+            if isinstance(policy_obs, dict):
+                for key in ["left_wrist_cam", "right_wrist_cam", "head_cam"]:
+                    if key in policy_obs:
+                        camera_data[key] = policy_obs[key]
+        if camera_data:
+            return "camera_obs", camera_data
+        return None
+
+
+@configclass
+class _PreStepCameraRecorderCfg(RecorderTermCfg):
+    class_type: type[RecorderTerm] = _PreStepCameraRecorder
+
+
+@configclass
+class _ActionStateCameraRecorderManagerCfg(ActionStateRecorderManagerCfg):
+    """Recorder manager that records actions, states AND camera images."""
+    record_pre_step_camera_observations = _PreStepCameraRecorderCfg()
 
 
 # ── Joint diagnostic helpers ──────────────────────────────────────────────────
@@ -330,7 +363,7 @@ def main() -> None:
     env_cfg.observations.policy.concatenate_terms = False
 
     # Output directory
-    dataset_path = args_cli.dataset_file or "./demos"
+    dataset_path = args_cli.dataset_file or "./data"
     dataset_ext = os.path.splitext(dataset_path)[1]
     is_dir_path = dataset_path.endswith(os.sep) or dataset_ext == ""
 
@@ -354,14 +387,18 @@ def main() -> None:
     current_output_file_name = _next_available_filename()
     current_output_path = os.path.join(output_dir, f"{current_output_file_name}.hdf5")
 
-    # Recorder
-    env_cfg.recorders = ActionStateRecorderManagerCfg()
-    print("[INFO] Recording actions and states only (no images)")
-
-    for cam_key in ["left_wrist_cam", "right_wrist_cam", "head_cam", "robot_pov_cam_rgb"]:
-        if hasattr(env_cfg.observations.policy, cam_key):
-            delattr(env_cfg.observations.policy, cam_key)
-            print(f"[INFO] Removed {cam_key} from observations")
+    # Recorder — with or without camera images
+    enable_cameras = getattr(args_cli, "enable_cameras", False)
+    if enable_cameras:
+        env_cfg.recorders = _ActionStateCameraRecorderManagerCfg()
+        print("[INFO] Recording actions, states AND camera images")
+    else:
+        env_cfg.recorders = ActionStateRecorderManagerCfg()
+        print("[INFO] Recording actions and states only (no images)")
+        for cam_key in ["left_wrist_cam", "right_wrist_cam", "head_cam", "robot_pov_cam_rgb"]:
+            if hasattr(env_cfg.observations.policy, cam_key):
+                delattr(env_cfg.observations.policy, cam_key)
+                print(f"[INFO] Removed {cam_key} from observations")
 
     base_frame_keys = ["eef_pos_base", "eef_quat_base", "right_eef_pos_base",
                        "right_eef_quat_base", "gripper_pos_normalized", "right_gripper_pos_normalized"]
@@ -372,6 +409,10 @@ def main() -> None:
     env_cfg.recorders.dataset_export_dir_path = output_dir
     env_cfg.recorders.dataset_filename = current_output_file_name
     env_cfg.recorders.dataset_export_mode = DatasetExportMode.EXPORT_ALL
+    # ▸ CRITICAL: disable automatic export on every env.reset() —
+    #   otherwise empty episodes are written to the HDF5 each time
+    #   the environment resets (including the initial reset and R-key resets).
+    env_cfg.recorders.export_in_record_pre_reset = False
 
     # Create environment
     try:
@@ -379,6 +420,21 @@ def main() -> None:
     except Exception as e:
         omni.log.error(f"Failed to create environment: {e}")
         exit(1)
+
+    # The RecorderManager.__init__ eagerly creates an HDF5 file handler,
+    # but we don't want to leave an empty file if the user resets before
+    # the first successful demo.  Close and remove the empty file; we will
+    # create file handlers on-demand when exporting real data.
+    if (
+        hasattr(env.recorder_manager, "_dataset_file_handler")
+        and env.recorder_manager._dataset_file_handler is not None
+    ):
+        env.recorder_manager._dataset_file_handler.close()
+        env.recorder_manager._dataset_file_handler = None
+    _startup_empty = os.path.join(output_dir, f"{current_output_file_name}.hdf5")
+    if os.path.exists(_startup_empty) and os.path.getsize(_startup_empty) < 8192:
+        os.remove(_startup_empty)
+        print(f"[INFO] Removed startup placeholder: {os.path.basename(_startup_empty)}")
 
     expected_action_dim = _get_expected_action_dim(env) or env.action_space.shape[-1]
 
@@ -403,28 +459,38 @@ def main() -> None:
         auto_reset.home_right_ee_quat = rq
 
     def export_and_prepare_next():
+        """Export the current episode to a NEW HDF5 file and prepare for the next recording.
+
+        File handler is created on-demand here (not in advance), so reset-only
+        operations never leave behind empty HDF5 files.
+        """
         nonlocal recorded_demos, current_output_file_name, current_output_path
         nonlocal running_recording
+
+        # 1. Determine the output filename for this demo
+        current_output_file_name = _next_available_filename()
+        current_output_path = os.path.join(output_dir, f"{current_output_file_name}.hdf5")
+
+        # 2. Create a fresh file handler and export
+        env.recorder_manager.cfg.dataset_filename = current_output_file_name
+        fh = env.recorder_manager.cfg.dataset_file_handler_class_type()
+        fh.create(
+            os.path.join(output_dir, current_output_file_name),
+            env_name=getattr(env.cfg, "env_name", None),
+        )
+        env.recorder_manager._dataset_file_handler = fh
 
         env.recorder_manager.record_pre_reset([0], force_export_or_skip=False)
         env.recorder_manager.export_episodes([0])
         recorded_demos += 1
         print(f"[{recorded_demos}] Demo exported to: {current_output_path}")
 
-        if hasattr(env.recorder_manager, "_dataset_file_handler") and env.recorder_manager._dataset_file_handler is not None:
-            env.recorder_manager._dataset_file_handler.close()
+        # 3. Close the file handler — no pre-creation for the next file
+        fh.close()
+        env.recorder_manager._dataset_file_handler = None
 
-        current_output_file_name = _next_available_filename()
-        current_output_path = os.path.join(output_dir, f"{current_output_file_name}.hdf5")
-
-        env.recorder_manager.cfg.dataset_filename = current_output_file_name
-        env.recorder_manager._dataset_file_handler = env.recorder_manager.cfg.dataset_file_handler_class_type()
-        env.recorder_manager._dataset_file_handler.create(
-            os.path.join(output_dir, current_output_file_name),
-            env_name=getattr(env.cfg, "env_name", None),
-        )
+        # 4. Reset environment for the next recording
         env.recorder_manager.reset([0])
-
         env.sim.reset()
         env.reset()
         teleop_interface.reset()
@@ -432,17 +498,22 @@ def main() -> None:
 
         running_recording = True
         print("=" * 60)
-        print(f"[INFO] Ready for next trajectory: {current_output_file_name}.hdf5")
+        print("[INFO] Episode saved.  Ready for next trajectory.")
         print("=" * 60)
 
     def reset_only():
+        """Discard current recording and reset the environment.
+
+        No data is exported; the recorder buffer is cleared BEFORE env.reset()
+        so that record_pre_reset (even if it somehow fires) has nothing to write.
+        """
+        env.recorder_manager.reset([0])       # clear buffer first
         env.sim.reset()
-        env.recorder_manager.reset([0])
         env.reset()
         teleop_interface.reset()
         _store_home_ee_poses()
         auto_reset.clear()
-        print("[INFO] Environment reset (no export).")
+        print("[INFO] Environment reset — recording discarded, no file written.")
 
     def request_reset():
         nonlocal should_reset
@@ -455,6 +526,38 @@ def main() -> None:
     env.reset()
     teleop_interface.reset()
     _store_home_ee_poses()
+
+    # Auto-create 4-viewport layout: Perspective + Left Wrist + Head + Right Wrist
+    # Viewport 1 (default, Perspective) and Viewport 2 are created by Isaac Sim.
+    # We create Viewport 3 and 4 for the remaining cameras.
+    try:
+        from omni.kit.viewport.window import ViewportWindow
+        import omni.usd
+
+        stage = omni.usd.get_context().get_stage()
+        # Ordered: Viewport 1=Perspective(default), 2=Left Wrist, 3=Head, 4=Right Wrist
+        cam_viewport_map = [
+            (2, "Left_Gripper_Camera", "Left Wrist"),
+            (3, "Head_Camera", "Head"),
+            (4, "Right_Gripper_Camera", "Right Wrist"),
+        ]
+        cam_paths = {}
+        for prim in stage.Traverse():
+            name = prim.GetName()
+            for _, cam_name, _ in cam_viewport_map:
+                if name == cam_name:
+                    cam_paths[cam_name] = str(prim.GetPath())
+
+        for vp_num, cam_name, label in cam_viewport_map:
+            path = cam_paths.get(cam_name)
+            if path is None:
+                continue
+            if vp_num >= 3:
+                vp = ViewportWindow(f"Viewport {vp_num}", width=640, height=480)
+                vp.viewport_api.set_active_camera(path)
+            print(f"[INFO] Viewport {vp_num} -> {label} ({path})")
+    except Exception as e:
+        print(f"[INFO] Auto-viewport setup skipped: {e}")
 
     print(f"Using teleop device:\n{teleop_interface}")
     print("=" * 60)

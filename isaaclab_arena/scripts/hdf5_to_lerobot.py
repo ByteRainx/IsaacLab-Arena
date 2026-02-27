@@ -2,24 +2,25 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: Apache-2.0
-"""
-Convert HDF5 demonstration files to LeRobot v2.1 dataset format.
+"""Convert HDF5 demonstration files to LeRobot v2.1 dataset format.
+
+Reads HDF5 files produced by record_ex001_remote_demos.py (with --enable_cameras),
+where each HDF5 file is a single episode containing actions, camera images, and
+state observations.
 
 Output format follows GR00T-LeRobot v2.1 standard (per-episode files):
   data/chunk-000/episode_000000.parquet  (one per episode)
-  videos/chunk-000/observation.images.faceImg/episode_000000.mp4  (one per episode per camera)
+  videos/chunk-000/observation.images.faceImg/episode_000000.mp4  (per camera)
   meta/info.json, episodes.jsonl, tasks.jsonl
 
 Camera naming aligned with convert2lerobot.py:
   head_cam -> faceImg, left_wrist_cam -> leftImg, right_wrist_cam -> rightImg
 
-Actions read from original vr_episodeX.hdf5 (state-replay _with_images has zero actions).
-Camera images + state read from _with_images.hdf5.
 Auto-detects and skips duplicate initial frames.
 
 Usage:
     python hdf5_to_lerobot.py
-    python hdf5_to_lerobot.py --input_dir /path/to/demos --output_dir /path/to/output
+    python hdf5_to_lerobot.py --input_dir /path/to/data --output_dir /path/to/output
 """
 
 import argparse
@@ -41,26 +42,19 @@ from scipy.spatial.transform import Rotation as R
 # ============================================================
 # Configuration - aligned with convert2lerobot.py
 # ============================================================
-FPS = 50  # Simulation step rate: 1 / (dt * decimation) = 1 / (0.005 * 4) = 50Hz
-REPO_ID = "isaaclab_arena_demos"
-DEFAULT_TASK = "put_blocks_to_color"
-CHUNKS_SIZE = 1000  # Episodes per chunk (v2.1 standard)
+FPS = 50
+REPO_ID = 'isaaclab_arena_demos'
+DEFAULT_TASK = 'put_blocks_to_color'
+CHUNKS_SIZE = 1000
 
-# Camera name mapping: HDF5 key → LeRobot key (aligned with convert2lerobot.py)
 CAMERA_NAME_MAPPING = {
-    "head_cam": "faceImg",
-    "left_wrist_cam": "leftImg",
-    "right_wrist_cam": "rightImg",
+    'head_cam': 'faceImg',
+    'left_wrist_cam': 'leftImg',
+    'right_wrist_cam': 'rightImg',
 }
 
-# State observation layout: [x, y, z, r, p, y, gripper] × 2 arms = 14D
-# Left arm:  eef_pos(3) + eef_quat→euler(3) + gripper_pos(1) = 7
-# Right arm: right_eef_pos(3) + right_eef_quat→euler(3) + right_gripper_pos(1) = 7
-# Total state dim = 14
-
-# v2.1 path templates
-DATA_PATH_TEMPLATE = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
-VIDEO_PATH_TEMPLATE = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
+DATA_PATH_TEMPLATE = 'data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet'
+VIDEO_PATH_TEMPLATE = 'videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4'
 
 
 # ============================================================
@@ -72,38 +66,21 @@ def natural_sort_key(path: str) -> list:
     return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', basename)]
 
 
-def find_hdf5_file_pairs(demos_dir: Path) -> list[dict]:
-    """
-    Find matching pairs: original HDF5 (actions) + _with_images HDF5 (cameras + state).
-    """
-    img_pattern = str(demos_dir / "*_with_images.hdf5")
-    img_files = sorted(glob.glob(img_pattern), key=natural_sort_key)
-
-    pairs = []
-    for img_path in img_files:
-        orig_path = img_path.replace("_with_images.hdf5", ".hdf5")
-        name = os.path.basename(orig_path).replace(".hdf5", "")
-
-        if os.path.exists(orig_path):
-            pairs.append({
-                "original": Path(orig_path),
-                "with_images": Path(img_path),
-                "name": name,
-            })
-        else:
-            print(f"  WARNING: No original HDF5 for {os.path.basename(img_path)}, skipping.")
-
-    return pairs
+def find_hdf5_files(data_dir: Path) -> list[Path]:
+    """Find all HDF5 files in the data directory, sorted naturally."""
+    pattern = str(data_dir / '*.hdf5')
+    files = sorted(glob.glob(pattern), key=natural_sort_key)
+    return [Path(f) for f in files]
 
 
 def find_data_demo(f: h5py.File) -> str:
     """Find the demo group key that contains actual trajectory data."""
-    data_group = f["data"]
+    data_group = f['data']
     for key in sorted(data_group.keys()):
         demo = data_group[key]
-        if "actions" in demo or "camera_obs" in demo or "obs" in demo:
+        if 'actions' in demo or 'camera_obs' in demo or 'obs' in demo:
             return key
-    raise ValueError("No valid demo group found in HDF5 file")
+    raise ValueError('No valid demo group found in HDF5 file')
 
 
 def count_duplicate_initial_frames(cam_data: np.ndarray, max_check: int = 30) -> int:
@@ -120,131 +97,117 @@ def count_duplicate_initial_frames(cam_data: np.ndarray, max_check: int = 30) ->
     return n_dup
 
 
-def get_video_metadata(video_path: str) -> dict:
+def get_video_metadata(video_path: str) -> dict | None:
     """Get video metadata using ffprobe."""
     cmd = [
-        "ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=height,width,codec_name,pix_fmt,r_frame_rate",
-        "-of", "json", str(video_path),
+        'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=height,width,codec_name,pix_fmt,r_frame_rate',
+        '-of', 'json', str(video_path),
     ]
     try:
-        output = subprocess.check_output(cmd).decode("utf-8")
+        output = subprocess.check_output(cmd).decode('utf-8')
         probe_data = json.loads(output)
-        stream = probe_data["streams"][0]
-        num, den = map(int, stream["r_frame_rate"].split("/"))
+        stream = probe_data['streams'][0]
+        num, den = map(int, stream['r_frame_rate'].split('/'))
         fps = num / den
         return {
-            "dtype": "video",
-            "shape": [stream["height"], stream["width"], 3],
-            "names": ["height", "width", "channel"],
-            "video_info": {
-                "video.width": stream["width"],
-                "video.height": stream["height"],
-                "video.fps": fps,
-                "video.codec": stream["codec_name"],
-                "video.pix_fmt": stream["pix_fmt"],
-                "video.channels": 3,
-                "video.is_depth_map": False,
-                "has_audio": False,
+            'dtype': 'video',
+            'shape': [stream['height'], stream['width'], 3],
+            'names': ['height', 'width', 'channel'],
+            'video_info': {
+                'video.width': stream['width'],
+                'video.height': stream['height'],
+                'video.fps': fps,
+                'video.codec': stream['codec_name'],
+                'video.pix_fmt': stream['pix_fmt'],
+                'video.channels': 3,
+                'video.is_depth_map': False,
+                'has_audio': False,
             },
         }
     except Exception as e:
-        print(f"  WARNING: ffprobe failed for {video_path}: {e}")
+        print(f'  WARNING: ffprobe failed for {video_path}: {e}')
         return None
 
 
-def extract_episode_data(
-    original_path: Path,
-    with_images_path: Path,
-    min_skip: int = 1,
-) -> dict:
-    """
-    Extract episode data from paired HDF5 files:
-      - Actions from original HDF5
-      - Camera images + state from _with_images HDF5
+def _quat_to_euler(quat_wxyz: np.ndarray) -> np.ndarray:
+    """Convert quaternion (w,x,y,z) to euler angles (roll, pitch, yaw)."""
+    quat_xyzw = np.concatenate([quat_wxyz[:, 1:4], quat_wxyz[:, 0:1]], axis=1)
+    return R.from_quat(quat_xyzw).as_euler('xyz').astype(np.float32)
+
+
+def extract_episode_data(hdf5_path: Path, min_skip: int = 1) -> dict:
+    """Extract episode data from a single HDF5 file.
+
+    Reads actions, camera images, and state observations produced by
+    record_ex001_remote_demos.py.
 
     Returns dict with: actions, state, cameras, num_frames, skip_n
     """
-    with h5py.File(with_images_path, "r") as f_img:
-        img_demo_key = find_data_demo(f_img)
-        img_demo = f_img[f"data/{img_demo_key}"]
+    with h5py.File(hdf5_path, 'r') as f:
+        demo_key = find_data_demo(f)
+        demo = f[f'data/{demo_key}']
 
-        cam_group = img_demo["camera_obs"] if "camera_obs" in img_demo else img_demo.get("obs", img_demo)
+        cam_group = demo['camera_obs'] if 'camera_obs' in demo else None
+        obs_group = demo['obs'] if 'obs' in demo else demo
 
-        # Auto-detect duplicate initial frames
+        # Auto-detect duplicate initial frames using a reference camera
         ref_cam_key = None
+        ref_cam_source = None
         for hdf5_key in CAMERA_NAME_MAPPING:
-            if hdf5_key in cam_group:
+            if cam_group is not None and hdf5_key in cam_group:
                 ref_cam_key = hdf5_key
+                ref_cam_source = cam_group
+                break
+            if hdf5_key in obs_group:
+                ref_cam_key = hdf5_key
+                ref_cam_source = obs_group
                 break
 
-        if ref_cam_key is not None:
-            ref_cam_data = cam_group[ref_cam_key][:]
+        if ref_cam_key is not None and ref_cam_source is not None:
+            ref_cam_data = ref_cam_source[ref_cam_key][:]
             skip_n = count_duplicate_initial_frames(ref_cam_data)
             skip_n = max(skip_n, min_skip)
+            total_frames = ref_cam_source[ref_cam_key].shape[0]
         else:
             skip_n = min_skip
+            total_frames = demo['actions'].shape[0]
 
-        total_frames_img = cam_group[ref_cam_key].shape[0] if ref_cam_key else 0
+        n_frames = total_frames - skip_n
 
-        # State observations: [x, y, z, r, p, y, gripper] × 2 arms = 14D
-        obs_group = img_demo["obs"] if "obs" in img_demo else img_demo
-        n_frames = total_frames_img - skip_n
+        # Actions: raw joint-space actions (14D)
+        actions = demo['actions'][skip_n:].astype(np.float32)
 
-        def _quat_to_euler(quat_wxyz: np.ndarray) -> np.ndarray:
-            """Convert quaternion (w,x,y,z) to euler angles (roll, pitch, yaw)."""
-            # IsaacLab uses (w, x, y, z), scipy expects (x, y, z, w)
-            quat_xyzw = np.concatenate([quat_wxyz[:, 1:4], quat_wxyz[:, 0:1]], axis=1)
-            return R.from_quat(quat_xyzw).as_euler('xyz').astype(np.float32)
-
+        # State: [eef_pos(3), euler(3), gripper(1)] x 2 arms = 14D
         state_parts = []
         has_state = True
-        # Left arm: [eef_pos(3), euler(3), gripper(1)]
-        if "eef_pos" in obs_group and "eef_quat" in obs_group and "gripper_pos" in obs_group:
-            state_parts.append(obs_group["eef_pos"][skip_n:].astype(np.float32))          # (N, 3)
-            state_parts.append(_quat_to_euler(obs_group["eef_quat"][skip_n:].astype(np.float32)))  # (N, 3)
-            state_parts.append(obs_group["gripper_pos"][skip_n:].astype(np.float32))      # (N, 1)
+
+        if 'eef_pos' in obs_group and 'eef_quat' in obs_group and 'gripper_pos' in obs_group:
+            state_parts.append(obs_group['eef_pos'][skip_n:].astype(np.float32))
+            state_parts.append(_quat_to_euler(obs_group['eef_quat'][skip_n:].astype(np.float32)))
+            state_parts.append(obs_group['gripper_pos'][skip_n:].astype(np.float32))
         else:
             has_state = False
-        # Right arm: [right_eef_pos(3), euler(3), right_gripper(1)]
-        if "right_eef_pos" in obs_group and "right_eef_quat" in obs_group and "right_gripper_pos" in obs_group:
-            state_parts.append(obs_group["right_eef_pos"][skip_n:].astype(np.float32))    # (N, 3)
-            state_parts.append(_quat_to_euler(obs_group["right_eef_quat"][skip_n:].astype(np.float32)))  # (N, 3)
-            state_parts.append(obs_group["right_gripper_pos"][skip_n:].astype(np.float32))  # (N, 1)
+
+        if 'right_eef_pos' in obs_group and 'right_eef_quat' in obs_group and 'right_gripper_pos' in obs_group:
+            state_parts.append(obs_group['right_eef_pos'][skip_n:].astype(np.float32))
+            state_parts.append(_quat_to_euler(obs_group['right_eef_quat'][skip_n:].astype(np.float32)))
+            state_parts.append(obs_group['right_gripper_pos'][skip_n:].astype(np.float32))
         else:
             has_state = False
 
         if has_state and state_parts:
-            state = np.concatenate(state_parts, axis=1)  # (N, 14)
+            state = np.concatenate(state_parts, axis=1)
         else:
             state = np.zeros((n_frames, 14), dtype=np.float32)
 
-        # Camera observations
+        # Camera observations (prefer camera_obs group, fallback to obs)
         cameras = {}
         for hdf5_key, lerobot_key in CAMERA_NAME_MAPPING.items():
-            if hdf5_key in cam_group:
+            if cam_group is not None and hdf5_key in cam_group:
                 cameras[lerobot_key] = cam_group[hdf5_key][skip_n:]
-
-    # Actions from original HDF5
-    # Raw action layout: [dx,dy,dz, axis_angle(3), gripper] × 2 arms = 14D
-    # Convert rotation from axis-angle to euler: [dx,dy,dz, r,p,y, gripper] × 2 arms = 14D
-    with h5py.File(original_path, "r") as f_orig:
-        orig_demo_key = find_data_demo(f_orig)
-        orig_demo = f_orig[f"data/{orig_demo_key}"]
-        raw_actions = orig_demo["actions"][skip_n:].astype(np.float32)
-
-        def _rotvec_to_euler(rotvec: np.ndarray) -> np.ndarray:
-            """Convert axis-angle (rotation vector) to euler angles (roll, pitch, yaw)."""
-            return R.from_rotvec(rotvec).as_euler('xyz').astype(np.float32)
-
-        actions = np.concatenate([
-            raw_actions[:, 0:3],                          # left pos (3)
-            _rotvec_to_euler(raw_actions[:, 3:6]),         # left rot: axis-angle → euler (3)
-            raw_actions[:, 6:7],                           # left gripper (1)
-            raw_actions[:, 7:10],                          # right pos (3)
-            _rotvec_to_euler(raw_actions[:, 10:13]),       # right rot: axis-angle → euler (3)
-            raw_actions[:, 13:14],                         # right gripper (1)
-        ], axis=1)  # (N, 14)
+            elif hdf5_key in obs_group:
+                cameras[lerobot_key] = obs_group[hdf5_key][skip_n:]
 
     # Ensure frame counts match
     num_frames = min(len(actions), len(state))
@@ -258,20 +221,19 @@ def extract_episode_data(
         cameras[k] = cameras[k][:num_frames]
 
     return {
-        "actions": actions,
-        "state": state,
-        "cameras": cameras,
-        "num_frames": num_frames,
-        "skip_n": skip_n,
+        'actions': actions,
+        'state': state,
+        'cameras': cameras,
+        'num_frames': num_frames,
+        'skip_n': skip_n,
     }
 
 
 def write_episode_video(frames: np.ndarray, video_path: Path, fps: int) -> None:
-    """Write frames to mp4 video using torchvision (h264 codec, matching GR00T convert)."""
+    """Write frames to mp4 video using torchvision (h264 codec)."""
     video_path.parent.mkdir(parents=True, exist_ok=True)
-    # frames: (N, H, W, 3) uint8 RGB -> torch tensor (N, H, W, 3) uint8
     frames_tensor = torch.from_numpy(frames)
-    torchvision.io.write_video(str(video_path), frames_tensor, fps, video_codec="h264")
+    torchvision.io.write_video(str(video_path), frames_tensor, fps, video_codec='h264')
 
 
 def write_episode_parquet(
@@ -289,21 +251,19 @@ def write_episode_parquet(
     parquet_path = output_dir / rel_path
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Build data dict
     data = {
-        "observation.state": [row for row in state],
-        "action": [row for row in actions],
-        "timestamp": np.arange(num_frames, dtype=np.float64) / FPS,
-        "episode_index": np.full(num_frames, episode_index, dtype=np.int64),
-        "index": np.arange(global_index_start, global_index_start + num_frames, dtype=np.int64),
-        "frame_index": np.arange(num_frames, dtype=np.int64),
-        "task_index": np.full(num_frames, task_index, dtype=np.int64),
-        "next.reward": np.zeros(num_frames, dtype=np.float64),
-        "next.done": np.zeros(num_frames, dtype=bool),
+        'observation.state': list(state),
+        'action': list(actions),
+        'timestamp': np.arange(num_frames, dtype=np.float64) / FPS,
+        'episode_index': np.full(num_frames, episode_index, dtype=np.int64),
+        'index': np.arange(global_index_start, global_index_start + num_frames, dtype=np.int64),
+        'frame_index': np.arange(num_frames, dtype=np.int64),
+        'task_index': np.full(num_frames, task_index, dtype=np.int64),
+        'next.reward': np.zeros(num_frames, dtype=np.float64),
+        'next.done': np.zeros(num_frames, dtype=bool),
     }
-    # Last frame is done
-    data["next.reward"][-1] = 1.0
-    data["next.done"][-1] = True
+    data['next.reward'][-1] = 1.0
+    data['next.done'][-1] = True
 
     df = pd.DataFrame(data)
     df.to_parquet(parquet_path)
@@ -314,105 +274,106 @@ def write_episode_parquet(
 # Main
 # ============================================================
 def parse_args():
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Convert HDF5 demonstration files to LeRobot v2.1 dataset format."
+        description='Convert HDF5 demonstration files to LeRobot v2.1 dataset format.'
     )
     parser.add_argument(
-        "--input_dir", type=str, default="./demos",
-        help="Directory containing HDF5 files (default: ./demos)",
+        '--input_dir', type=str, default='./data',
+        help='Directory containing HDF5 files (default: ./data)',
     )
     parser.add_argument(
-        "--output_dir", type=str, default=None,
-        help="Output directory for LeRobot dataset (default: <input_dir>/lerobot_dataset)",
+        '--output_dir', type=str, default='./lerobot_data',
+        help='Output directory for LeRobot dataset (default: ./lerobot_data)',
     )
     parser.add_argument(
-        "--task", type=str, default=DEFAULT_TASK,
-        help="Task description for all episodes",
+        '--task', type=str, default=DEFAULT_TASK,
+        help='Task description for all episodes',
     )
     parser.add_argument(
-        "--force", action="store_true",
-        help="Force overwrite existing output directory",
+        '--force', action='store_true',
+        help='Force overwrite existing output directory',
     )
     return parser.parse_args()
 
 
 def main():
+    """Convert HDF5 demonstrations to LeRobot v2.1 dataset."""
     args = parse_args()
 
     input_dir = Path(args.input_dir)
-    output_dir = Path(args.output_dir) if args.output_dir else input_dir / "lerobot_dataset"
+    output_dir = Path(args.output_dir)
     task = args.task
 
-    # --- Discover HDF5 file pairs ---
-    print(f"Scanning for HDF5 file pairs in: {input_dir}")
-    pairs = find_hdf5_file_pairs(input_dir)
-    if not pairs:
-        print("No matching HDF5 file pairs found.")
+    # --- Discover HDF5 files ---
+    print(f'Scanning for HDF5 files in: {input_dir}')
+    hdf5_files = find_hdf5_files(input_dir)
+    if not hdf5_files:
+        print('No HDF5 files found.')
         return
 
-    print(f"Found {len(pairs)} episode pairs:")
-    for p in pairs:
-        print(f"  - {p['name']}")
+    print(f'Found {len(hdf5_files)} HDF5 files:')
+    for f in hdf5_files:
+        print(f'  - {f.name}')
 
     # --- Handle output directory ---
     if output_dir.exists():
         if args.force:
-            print(f"\n--force: Removing existing output: {output_dir}")
+            print(f'\n--force: Removing existing output: {output_dir}')
             shutil.rmtree(output_dir)
         else:
-            print(f"\nERROR: Output directory already exists: {output_dir}")
-            print("  Use --force to overwrite, or specify a different --output_dir")
+            print(f'\nERROR: Output directory already exists: {output_dir}')
+            print('  Use --force to overwrite, or specify a different --output_dir')
             return
 
-    # --- Create directory structure ---
-    meta_dir = output_dir / "meta"
+    meta_dir = output_dir / 'meta'
     meta_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Analyze first file for dimensions ---
-    first_data = extract_episode_data(pairs[0]["original"], pairs[0]["with_images"])
-    action_dim = first_data["actions"].shape[1]
-    state_dim = first_data["state"].shape[1]
-    available_cameras = list(first_data["cameras"].keys())
-    cam0_shape = first_data["cameras"][available_cameras[0]].shape[1:] if available_cameras else (480, 640, 3)
+    first_data = extract_episode_data(hdf5_files[0])
+    action_dim = first_data['actions'].shape[1]
+    state_dim = first_data['state'].shape[1]
+    available_cameras = list(first_data['cameras'].keys())
+    cam0_shape = first_data['cameras'][available_cameras[0]].shape[1:] if available_cameras else (480, 640, 3)
 
-    print("\nDataset configuration:")
-    print(f"  FPS:          {FPS}")
-    print(f"  Action dim:   {action_dim}")
-    print(f"  State dim:    {state_dim}")
-    print(f"  Video shape:  {cam0_shape}")
-    print(f"  Cameras:      {available_cameras}")
-    print(f"  Task:         {task}")
-    print(f"  Output:       {output_dir}")
-    print("  Format:       LeRobot v2.1 (per-episode files)")
+    print('\nDataset configuration:')
+    print(f'  FPS:          {FPS}')
+    print(f'  Action dim:   {action_dim}')
+    print(f'  State dim:    {state_dim}')
+    print(f'  Video shape:  {cam0_shape}')
+    print(f'  Cameras:      {available_cameras}')
+    print(f'  Task:         {task}')
+    print(f'  Output:       {output_dir}')
+    print('  Format:       LeRobot v2.1 (per-episode files)')
 
-    # --- Process each HDF5 pair as one episode ---
+    # --- Process each HDF5 file as one episode ---
     episodes_info = []
     total_frames = 0
     video_meta_cache = {}
 
-    for episode_index, pair in enumerate(pairs):
-        print(f"\n[Episode {episode_index}] {pair['name']}")
+    for episode_index, hdf5_path in enumerate(hdf5_files):
+        print(f'\n[Episode {episode_index}] {hdf5_path.name}')
 
         try:
-            ep_data = extract_episode_data(pair["original"], pair["with_images"])
+            ep_data = extract_episode_data(hdf5_path)
         except Exception as e:
-            print(f"  ERROR: {e}, skipping.")
+            print(f'  ERROR: {e}, skipping.')
             continue
 
-        num_frames = ep_data["num_frames"]
-        skip_n = ep_data["skip_n"]
+        num_frames = ep_data['num_frames']
+        skip_n = ep_data['skip_n']
 
         if num_frames <= 0:
-            print("  WARNING: No valid frames, skipping.")
+            print('  WARNING: No valid frames, skipping.')
             continue
 
-        actions = ep_data["actions"]
-        state = ep_data["state"]
-        cameras = ep_data["cameras"]
+        actions = ep_data['actions']
+        state = ep_data['state']
+        cameras = ep_data['cameras']
 
-        print(f"  Skipped initial frames: {skip_n}")
-        print(f"  Usable frames: {num_frames}")
-        print(f"  Action range: [{actions.min():.4f}, {actions.max():.4f}]")
+        print(f'  Skipped initial frames: {skip_n}')
+        print(f'  Usable frames: {num_frames}')
+        print(f'  Action range: [{actions.min():.4f}, {actions.max():.4f}]')
 
         # --- Write per-episode parquet ---
         write_episode_parquet(
@@ -428,7 +389,7 @@ def main():
         # --- Write per-episode videos ---
         episode_chunk = episode_index // CHUNKS_SIZE
         for cam_key, cam_frames in cameras.items():
-            video_key = f"observation.images.{cam_key}"
+            video_key = f'observation.images.{cam_key}'
             video_rel = VIDEO_PATH_TEMPLATE.format(
                 episode_chunk=episode_chunk,
                 video_key=video_key,
@@ -437,88 +398,84 @@ def main():
             video_path = output_dir / video_rel
             write_episode_video(cam_frames, video_path, FPS)
 
-            # Cache video metadata from first episode
             if video_key not in video_meta_cache:
                 meta = get_video_metadata(str(video_path))
                 if meta:
                     video_meta_cache[video_key] = meta
 
-        # --- Track episode info ---
         episodes_info.append({
-            "episode_index": episode_index,
-            "tasks": [task],
-            "length": num_frames,
+            'episode_index': episode_index,
+            'tasks': [task],
+            'length': num_frames,
         })
         total_frames += num_frames
-        print(f"  Saved. (episode {episode_index})")
+        print(f'  Saved. (episode {episode_index})')
 
     # --- Write meta/tasks.jsonl ---
-    tasks_path = meta_dir / "tasks.jsonl"
-    with open(tasks_path, "w") as f:
-        f.write(json.dumps({"task_index": 0, "task": task}) + "\n")
+    tasks_path = meta_dir / 'tasks.jsonl'
+    with open(tasks_path, 'w') as f:
+        f.write(json.dumps({'task_index': 0, 'task': task}) + '\n')
 
     # --- Write meta/episodes.jsonl ---
-    episodes_path = meta_dir / "episodes.jsonl"
-    with open(episodes_path, "w") as f:
+    episodes_path = meta_dir / 'episodes.jsonl'
+    with open(episodes_path, 'w') as f:
         for ep in episodes_info:
-            f.write(json.dumps(ep) + "\n")
+            f.write(json.dumps(ep) + '\n')
 
     # --- Build features dict ---
     features = {}
-    # Video features (from cached metadata)
     for video_key, meta in video_meta_cache.items():
         features[video_key] = meta
 
-    # State/action features
-    features["observation.state"] = {
-        "dtype": "float32",
-        "shape": [state_dim],
-        "names": None,
+    features['observation.state'] = {
+        'dtype': 'float32',
+        'shape': [state_dim],
+        'names': None,
     }
-    features["action"] = {
-        "dtype": "float32",
-        "shape": [action_dim],
-        "names": None,
+    features['action'] = {
+        'dtype': 'float32',
+        'shape': [action_dim],
+        'names': None,
     }
-    features["timestamp"] = {"dtype": "float64", "shape": [1]}
-    features["episode_index"] = {"dtype": "int64", "shape": [1]}
-    features["index"] = {"dtype": "int64", "shape": [1]}
-    features["frame_index"] = {"dtype": "int64", "shape": [1]}
-    features["task_index"] = {"dtype": "int64", "shape": [1]}
-    features["next.reward"] = {"dtype": "float64", "shape": [1]}
-    features["next.done"] = {"dtype": "bool", "shape": [1]}
+    features['timestamp'] = {'dtype': 'float64', 'shape': [1]}
+    features['episode_index'] = {'dtype': 'int64', 'shape': [1]}
+    features['index'] = {'dtype': 'int64', 'shape': [1]}
+    features['frame_index'] = {'dtype': 'int64', 'shape': [1]}
+    features['task_index'] = {'dtype': 'int64', 'shape': [1]}
+    features['next.reward'] = {'dtype': 'float64', 'shape': [1]}
+    features['next.done'] = {'dtype': 'bool', 'shape': [1]}
 
     # --- Write meta/info.json ---
     num_episodes = len(episodes_info)
     info = {
-        "codebase_version": "v2.1",
-        "robot_type": None,
-        "total_episodes": num_episodes,
-        "total_frames": total_frames,
-        "total_tasks": 1,
-        "total_videos": num_episodes,
-        "total_chunks": num_episodes // CHUNKS_SIZE,
-        "chunks_size": CHUNKS_SIZE,
-        "fps": FPS,
-        "splits": {"train": f"0:{num_episodes}"},
-        "data_path": DATA_PATH_TEMPLATE,
-        "video_path": VIDEO_PATH_TEMPLATE,
-        "features": features,
+        'codebase_version': 'v2.1',
+        'robot_type': None,
+        'total_episodes': num_episodes,
+        'total_frames': total_frames,
+        'total_tasks': 1,
+        'total_videos': num_episodes * len(available_cameras),
+        'total_chunks': (num_episodes - 1) // CHUNKS_SIZE + 1 if num_episodes > 0 else 0,
+        'chunks_size': CHUNKS_SIZE,
+        'fps': FPS,
+        'splits': {'train': f'0:{num_episodes}'},
+        'data_path': DATA_PATH_TEMPLATE,
+        'video_path': VIDEO_PATH_TEMPLATE,
+        'features': features,
     }
-    info_path = meta_dir / "info.json"
-    with open(info_path, "w") as f:
+    info_path = meta_dir / 'info.json'
+    with open(info_path, 'w') as f:
         json.dump(info, f, indent=4)
 
-    print("\n" + "=" * 60)
-    print("Conversion complete!")
-    print("  Format:     LeRobot v2.1")
-    print(f"  Output:     {output_dir}")
-    print(f"  Episodes:   {num_episodes}")
-    print(f"  Frames:     {total_frames}")
-    print(f"  FPS:        {FPS}")
-    print(f"  Cameras:    {available_cameras}")
-    print("=" * 60)
+    print('\n' + '=' * 60)
+    print('Conversion complete!')
+    print('  Format:     LeRobot v2.1')
+    print(f'  Output:     {output_dir}')
+    print(f'  Episodes:   {num_episodes}')
+    print(f'  Frames:     {total_frames}')
+    print(f'  FPS:        {FPS}')
+    print(f'  Cameras:    {available_cameras}')
+    print('=' * 60)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

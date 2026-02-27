@@ -276,9 +276,9 @@ sim_joint[i] = joint_signs[i] × physical_joint[i] + joint_offsets[i]
 | joint3 (肘部) | **-1** | URDF origin 有 π 旋转，USD 轴向相反 |
 | joint4 (腕部1) | **-1** | 同上，Y轴方向反转 |
 | joint5 (腕部2) | **-1** | 轴向相反 |
-| joint6 (末端) | **-1** | URDF origin 有 π 旋转，X轴方向反转 |
+| joint6 (末端) | **+1** | 轴向一致 |
 
-默认值: `joint_signs = (1, 1, -1, -1, -1, -1)`
+默认值: `joint_signs = (1, 1, -1, -1, -1, 1)`
 
 > 如果发现某个关节还是反的，可以通过 `--joint_signs` 参数微调。
 
@@ -400,7 +400,6 @@ python -m isaaclab_arena.scripts.record_ex001_remote_demos \
     --disable_pinocchio \
     --enable_cameras \
     --remote_ip 10.100.21.249 \
-    --dataset_file ./demos \
     ex001arm_cvpr_scene_put_blocks_to_color
 ```
 
@@ -412,7 +411,6 @@ python -m isaaclab_arena.scripts.record_ex001_remote_demos \
     --disable_pinocchio \
     --enable_cameras \
     --remote_ip 10.100.21.249 \
-    --dataset_file ./demos \
     ex001arm_cvpr_scene_put_blocks_to_color
 ```
 
@@ -424,7 +422,6 @@ python -m isaaclab_arena.scripts.record_ex001_remote_demos \
     --disable_pinocchio \
     --enable_cameras \
     --remote_ip 10.100.21.249 \
-    --dataset_file ./demos \
     --debug \
     ex001arm_cvpr_scene_put_blocks_to_color
 ```
@@ -451,7 +448,7 @@ python -m isaaclab_arena.scripts.record_ex001_remote_demos \
 运行时 Debug 输出 (每 50 帧):
 
 ```
-[Joint Debug #50] signs=[1.0, 1.0, -1.0, -1.0, -1.0, -1.0]  offsets=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+[Joint Debug #50] signs=[1.0, 1.0, -1.0, -1.0, -1.0, 1.0]  offsets=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   L_raw   = [-0.0269, +0.0010, -0.0044, -0.0277, -0.3180, +0.0387]  grip=0.000
   L_mapped= [-0.0269, +0.0010, +0.0044, +0.0277, +0.3180, -0.0387]
   R_raw   = [-0.0292, +0.0040, +0.0185, +0.2096, -0.0216, -0.2169]  grip=0.000
@@ -491,10 +488,10 @@ python -m isaaclab_arena.scripts.record_ex001_remote_demos \
 | `--control_mode` | `ee` | 控制模式: `ee` (末端delta) / `joint` (关节直通) |
 | `--pos_scale` | `1.0` | 位置 delta 缩放 (仅 EE 模式) |
 | `--rot_scale` | `1.0` | 旋转 delta 缩放 (仅 EE 模式) |
-| `--joint_signs` | `1,1,-1,-1,-1,-1` | 关节符号翻转 (仅 Joint 模式, 6个逗号分隔) |
+| `--joint_signs` | `1,1,-1,-1,-1,1` | 关节符号翻转 (仅 Joint 模式, 6个逗号分隔) |
 | `--joint_offsets` | `0,0,0,0,0,0` | 关节偏移量 (仅 Joint 模式, 弧度, 6个逗号分隔) |
 | `--debug` | `false` | 打印调试信息 + 关节诊断表 |
-| `--dataset_file` | `./demos` | 数据输出目录 |
+| `--dataset_file` | `./data` | 数据输出目录 |
 | `--reset_duration` | `10.0` | 自动重置时长 (秒) |
 | `--disable_pinocchio` | - | 禁用 Pinocchio (避免库冲突) |
 | `--enable_cameras` | - | 启用仿真相机 |
@@ -506,7 +503,7 @@ python -m isaaclab_arena.scripts.record_ex001_remote_demos \
 每条轨迹保存为独立 HDF5 文件:
 
 ```
-demos/
+data/
 ├── arx_remote_ee_episode0.hdf5      # EE 模式采集
 ├── arx_remote_ee_episode1.hdf5
 ├── arx_remote_joint_episode0.hdf5   # Joint 模式采集
@@ -589,7 +586,7 @@ rostopic hz /joint_control
    ARX X5 的 URDF 中 joint3 和 joint6 的 `<origin>` 包含 π 旋转
    (`rpy="-3.1416 0 0"`)，转换为 USD 后关节轴向与物理臂相反。
    joint4 和 joint5 在双臂组装过程中也产生了轴向差异。
-   通过 `joint_signs=(1,1,-1,-1,-1,-1)` 在软件层面修正。
+   通过 `joint_signs=(1,1,-1,-1,-1,1)` 在软件层面修正。
 
 6. **为什么夹爪刚度设为 200?**
    原来的 stiffness=40 / damping=15 导致夹爪响应迟缓。提高到

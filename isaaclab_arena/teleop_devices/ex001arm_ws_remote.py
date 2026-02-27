@@ -151,8 +151,8 @@ class Ex001ArmWsRemoteTeleop:
         self._thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._thread.start()
 
-        # Start keyboard listener for callbacks
-        self._listener = None
+        # Start keyboard listener for callbacks (uses carb.input, same as other teleop devices)
+        self._keyboard_sub = None
         self._setup_keyboard_listener()
 
         logger.info(
@@ -186,26 +186,37 @@ class Ex001ArmWsRemoteTeleop:
                 time.sleep(self.cfg.reconnect_interval)
 
     # ------------------------------------------------------------------
-    # Keyboard listener
+    # Keyboard listener (carb.input — Isaac Sim built-in, works reliably)
     # ------------------------------------------------------------------
 
     def _setup_keyboard_listener(self) -> None:
+        """Register a keyboard listener via Isaac Sim's carb.input system.
+
+        This is the same mechanism used by ``Se3Keyboard`` and
+        ``BimanualSe3Keyboard`` and works whenever the Isaac Sim viewport
+        window has focus (unlike pynput which is blocked by carb).
+        """
         try:
-            from pynput import keyboard as pynput_keyboard
+            import carb.input
+            import omni.appwindow
 
-            def _on_press(key):
-                try:
-                    ch = key.char.upper() if hasattr(key, "char") and key.char else None
-                except AttributeError:
-                    ch = None
-                if ch and ch in self._additional_callbacks:
-                    self._additional_callbacks[ch]()
+            appwindow = omni.appwindow.get_default_app_window()
+            input_iface = carb.input.acquire_input_interface()
+            keyboard = appwindow.get_keyboard()
 
-            self._listener = pynput_keyboard.Listener(on_press=_on_press)
-            self._listener.daemon = True
-            self._listener.start()
-        except ImportError:
-            logger.warning("pynput not available; keyboard callbacks disabled.")
+            def _on_keyboard_event(event, *args, **kwargs) -> bool:
+                if event.type == carb.input.KeyboardEventType.KEY_PRESS:
+                    key_name = event.input.name  # e.g. "R", "ESCAPE", …
+                    cb = self._additional_callbacks.get(key_name)
+                    if cb is not None:
+                        cb()
+                return True
+
+            self._keyboard_sub = input_iface.subscribe_to_keyboard_events(
+                keyboard, _on_keyboard_event
+            )
+        except Exception as e:
+            logger.warning("carb.input keyboard listener unavailable: %s", e)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -213,8 +224,6 @@ class Ex001ArmWsRemoteTeleop:
 
     def __del__(self) -> None:
         self._should_run = False
-        if getattr(self, "_listener", None) is not None:
-            self._listener.stop()
 
     def __str__(self) -> str:
         status = "connected" if self._connected else "disconnected"

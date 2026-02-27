@@ -97,6 +97,10 @@ class Ex001ArmCvprScenePutBlocksToColorEnvironment(ExampleEnvironmentBase):
             xr_anchor_pos=robot_initial_pos,
             xr_anchor_rot=robot_initial_rot,
         )
+        # TEST-ONLY: EE input → IK solve → joint control. Remove after testing.
+        if getattr(args_cli, "ee_to_joint", False):
+            from isaaclab_arena.embodiments.ex001arm.ee_to_joint_action import EX001ArmEEToJointTestActionsCfg
+            embodiment.action_config = EX001ArmEEToJointTestActionsCfg()
         embodiment.set_initial_pose(
             Pose(
                 position_xyz=robot_initial_pos,
@@ -204,3 +208,9 @@ class Ex001ArmCvprScenePutBlocksToColorEnvironment(ExampleEnvironmentBase):
     @staticmethod
     def add_cli_args(parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--teleop_device", type=str, default=None)
+        # TEST-ONLY: EE→Joint mode. Remove after testing.
+        parser.add_argument(
+            "--ee_to_joint",
+            action="store_true",
+            help="[TEST] Use EE input + IK solve + joint control instead of direct IK action",
+        )

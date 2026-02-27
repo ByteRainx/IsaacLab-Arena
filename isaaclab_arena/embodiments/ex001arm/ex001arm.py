@@ -28,10 +28,12 @@ from isaaclab.utils import configclass
 from isaaclab_tasks.manager_based.manipulation.stack.mdp.observations import ee_frame_pos, ee_frame_quat
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.sim.spawners.lights import DomeLightCfg
 
 from isaaclab_arena.assets.register import register_asset
 from isaaclab_arena.embodiments.embodiment_base import EmbodimentBase
-from isaaclab_arena.embodiments.ex001arm.actions import ContactLimitedGripperActionCfg
+from isaaclab_arena.embodiments.ex001arm.actions import ThreeStateGripperActionCfg
 from isaaclab_arena.embodiments.ex001arm.observations import (
     ex001arm_left_gripper_pos,
     ex001arm_right_gripper_pos,
@@ -138,6 +140,15 @@ class EX001ArmSceneCfg:
     """Additions to the scene configuration coming from the EX001Arm embodiment."""
 
     robot: ArticulationCfg = MISSING
+
+    # Dome light (environment / ambient light) — always present with the embodiment
+    dome_light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/DomeLight",
+        spawn=DomeLightCfg(
+            color=(1.0, 1.0, 1.0),
+            intensity=1000.0,
+        ),
+    )
 
     # Left-arm end-effector frame transformer.
     # NOTE(sim-real): The offset (0.154m along local X) defines the EE
@@ -288,15 +299,15 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             "left_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["left_arm_gripper"],
                 effort_limit_sim=200.0,
-                stiffness=200.0,
-                damping=8.0,
+                stiffness=40.0,
+                damping=15.0,
             ),
             # Right gripper actuator (high stiffness for snappy response)
             "right_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["right_arm_gripper"],
                 effort_limit_sim=200.0,
-                stiffness=200.0,
-                damping=8.0,
+                stiffness=40.0,
+                damping=15.0,
             ),
         },
     )
@@ -315,15 +326,17 @@ class EX001ArmActionsCfg:
         scale=0.5,
     )
 
-    # Left gripper with contact force limiting
-    gripper_action: ActionTermCfg = ContactLimitedGripperActionCfg(
+    # Left gripper — state machine (OPEN → CLOSE → GRASP via contact force)
+    gripper_action: ActionTermCfg = ThreeStateGripperActionCfg(
         asset_name="robot",
         joint_names=["left_arm_gripper"],
         open_command_expr={"left_arm_gripper": 5.0},
-        close_command_expr={"left_arm_gripper": 0.0},
         grasp_command_expr={"left_arm_gripper": 1.7},
+        close_command_expr={"left_arm_gripper": 0.0},
         contact_sensor_name="left_gripper_contact",
-        force_threshold=15.0,  # Contact force threshold in N
+        force_threshold=5.0,
+        left_finger_body_regex="left_arm_gripper_left_link",
+        right_finger_body_regex="left_arm_gripper_right_link",
     )
 
     # Right arm IK action
@@ -335,15 +348,17 @@ class EX001ArmActionsCfg:
         scale=0.5,
     )
 
-    # Right gripper with contact force limiting
-    right_gripper_action: ActionTermCfg = ContactLimitedGripperActionCfg(
+    # Right gripper — state machine (OPEN → CLOSE → GRASP via contact force)
+    right_gripper_action: ActionTermCfg = ThreeStateGripperActionCfg(
         asset_name="robot",
         joint_names=["right_arm_gripper"],
         open_command_expr={"right_arm_gripper": 5.0},
-        close_command_expr={"right_arm_gripper": 0.0},
         grasp_command_expr={"right_arm_gripper": 1.7},
+        close_command_expr={"right_arm_gripper": 0.0},
         contact_sensor_name="right_gripper_contact",
-        force_threshold=15.0,  # Contact force threshold in N
+        force_threshold=5.0,
+        left_finger_body_regex="right_arm_gripper_left_link",
+        right_finger_body_regex="right_arm_gripper_right_link",
     )
 
 
@@ -364,15 +379,17 @@ class EX001ArmPhysicalTeleopActionsCfg:
         scale=1.0,
     )
 
-    # Left gripper with contact force limiting
-    gripper_action: ActionTermCfg = ContactLimitedGripperActionCfg(
+    # Left gripper — state machine (OPEN → CLOSE → GRASP via contact force)
+    gripper_action: ActionTermCfg = ThreeStateGripperActionCfg(
         asset_name="robot",
         joint_names=["left_arm_gripper"],
         open_command_expr={"left_arm_gripper": 5.0},
-        close_command_expr={"left_arm_gripper": 0.0},
         grasp_command_expr={"left_arm_gripper": 1.7},
+        close_command_expr={"left_arm_gripper": 0.0},
         contact_sensor_name="left_gripper_contact",
-        force_threshold=15.0,
+        force_threshold=5.0,
+        left_finger_body_regex="left_arm_gripper_left_link",
+        right_finger_body_regex="left_arm_gripper_right_link",
     )
 
     # Right arm IK action -- scale=1.0 for 1:1 physical mapping
@@ -384,15 +401,17 @@ class EX001ArmPhysicalTeleopActionsCfg:
         scale=1.0,
     )
 
-    # Right gripper with contact force limiting
-    right_gripper_action: ActionTermCfg = ContactLimitedGripperActionCfg(
+    # Right gripper — state machine (OPEN → CLOSE → GRASP via contact force)
+    right_gripper_action: ActionTermCfg = ThreeStateGripperActionCfg(
         asset_name="robot",
         joint_names=["right_arm_gripper"],
         open_command_expr={"right_arm_gripper": 5.0},
-        close_command_expr={"right_arm_gripper": 0.0},
         grasp_command_expr={"right_arm_gripper": 1.7},
+        close_command_expr={"right_arm_gripper": 0.0},
         contact_sensor_name="right_gripper_contact",
-        force_threshold=15.0,
+        force_threshold=5.0,
+        left_finger_body_regex="right_arm_gripper_left_link",
+        right_finger_body_regex="right_arm_gripper_right_link",
     )
 
 
@@ -401,8 +420,10 @@ class EX001ArmJointActionsCfg:
     """Absolute joint position action specifications for ARX teleoperation.
 
     Used with ``Ex001ArmArxBimanualTeleop`` in **joint** control mode.
-    Each arm's 6 joint positions are set directly, and the gripper receives
-    an absolute joint position value (``0.0`` = close, ``5.0`` = open).
+    Each arm's 6 joint positions are set directly.  The grippers use
+    :class:`ThreeStateGripperActionCfg` in **absolute_input** mode so
+    the master arm's continuous position is quantised into 3 discrete
+    states (Open / Grasp / Close) via thresholds.
     """
 
     # Left arm -- absolute joint position
@@ -413,12 +434,20 @@ class EX001ArmJointActionsCfg:
         use_default_offset=False,
     )
 
-    # Left gripper -- absolute joint position (0.0 close → 5.0 open)
-    gripper_action: ActionTermCfg = JointPositionActionCfg(
+    # Left gripper — state machine (absolute, ≥3.3→open, ≤1.0→close, contact→grasp)
+    gripper_action: ActionTermCfg = ThreeStateGripperActionCfg(
         asset_name="robot",
         joint_names=["left_arm_gripper"],
-        scale=1.0,
-        use_default_offset=False,
+        open_command_expr={"left_arm_gripper": 5.0},
+        grasp_command_expr={"left_arm_gripper": 1.7},
+        close_command_expr={"left_arm_gripper": 0.0},
+        absolute_input=True,
+        open_threshold=3.3,
+        close_threshold=1.0,
+        contact_sensor_name="left_gripper_contact",
+        force_threshold=5.0,
+        left_finger_body_regex="left_arm_gripper_left_link",
+        right_finger_body_regex="left_arm_gripper_right_link",
     )
 
     # Right arm -- absolute joint position
@@ -429,12 +458,20 @@ class EX001ArmJointActionsCfg:
         use_default_offset=False,
     )
 
-    # Right gripper -- absolute joint position (0.0 close → 5.0 open)
-    right_gripper_action: ActionTermCfg = JointPositionActionCfg(
+    # Right gripper — state machine (absolute, ≥3.3→open, ≤1.0→close, contact→grasp)
+    right_gripper_action: ActionTermCfg = ThreeStateGripperActionCfg(
         asset_name="robot",
         joint_names=["right_arm_gripper"],
-        scale=1.0,
-        use_default_offset=False,
+        open_command_expr={"right_arm_gripper": 5.0},
+        grasp_command_expr={"right_arm_gripper": 1.7},
+        close_command_expr={"right_arm_gripper": 0.0},
+        absolute_input=True,
+        open_threshold=3.3,
+        close_threshold=1.0,
+        contact_sensor_name="right_gripper_contact",
+        force_threshold=5.0,
+        left_finger_body_regex="right_arm_gripper_left_link",
+        right_finger_body_regex="right_arm_gripper_right_link",
     )
 
 
