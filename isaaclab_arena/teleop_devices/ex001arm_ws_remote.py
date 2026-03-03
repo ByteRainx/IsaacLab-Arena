@@ -172,6 +172,7 @@ class Ex001ArmWsRemoteTeleop:
         while self._should_run:
             try:
                 ws = websocket.create_connection(url, timeout=5)
+                self._ws = ws
                 self._connected = True
                 print(f"[WS Teleop] Connected to {url}")
                 while self._should_run:
@@ -180,10 +181,26 @@ class Ex001ArmWsRemoteTeleop:
                     with self._lock:
                         self._latest = data
             except Exception as e:
+                self._ws = None
                 if self._connected:
                     print(f"[WS Teleop] Disconnected: {e}")
                 self._connected = False
                 time.sleep(self.cfg.reconnect_interval)
+
+    def send_signal(self, cmd: str, **kwargs) -> None:
+        """Send a JSON signal back to the bridge (e.g. episode save/discard).
+
+        Safe to call from the main thread while ``_recv_loop`` runs in the
+        background — ``websocket-client`` uses separate internal locks for
+        read and write.
+        """
+        ws = self._ws
+        if ws is None or not self._connected:
+            return
+        try:
+            ws.send(json.dumps({"cmd": cmd, **kwargs}))
+        except Exception as exc:
+            logger.warning("send_signal(%s) failed: %s", cmd, exc)
 
     # ------------------------------------------------------------------
     # Keyboard listener (carb.input — Isaac Sim built-in, works reliably)
@@ -341,25 +358,35 @@ class Ex001ArmWsRemoteTeleop:
         with self._lock:
             state = self._latest
 
-        # No data yet -> zero action
-        if state is None or state.get("left") is None or state.get("right") is None:
+        # No data at all -> zero action
+        if state is None:
             return torch.zeros(14, dtype=torch.float32, device=self._sim_device)
 
-        left = state["left"]
-        right = state["right"]
+        left = state.get("left") or {}
+        right = state.get("right") or {}
 
-        # Check that joint fields are present
-        if "joint_pos" not in left or "joint_pos" not in right:
+        has_left = "joint_pos" in left
+        has_right = "joint_pos" in right
+
+        # Neither arm has joint data -> zero action
+        if not has_left and not has_right:
             return torch.zeros(14, dtype=torch.float32, device=self._sim_device)
 
-        left_jp = np.array(left["joint_pos"], dtype=np.float64)
-        right_jp = np.array(right["joint_pos"], dtype=np.float64)
+        if has_left:
+            left_jp = np.array(left["joint_pos"], dtype=np.float64)
+            left_joints_raw = left_jp[:6]
+            left_grip = left_jp[6] if len(left_jp) > 6 else 0.0
+        else:
+            left_joints_raw = np.zeros(6, dtype=np.float64)
+            left_grip = 0.0
 
-        # joint_pos[0:6] = joint angles, joint_pos[6] = gripper
-        left_joints_raw = left_jp[:6]
-        left_grip = left_jp[6] if len(left_jp) > 6 else 0.0
-        right_joints_raw = right_jp[:6]
-        right_grip = right_jp[6] if len(right_jp) > 6 else 0.0
+        if has_right:
+            right_jp = np.array(right["joint_pos"], dtype=np.float64)
+            right_joints_raw = right_jp[:6]
+            right_grip = right_jp[6] if len(right_jp) > 6 else 0.0
+        else:
+            right_joints_raw = np.zeros(6, dtype=np.float64)
+            right_grip = 0.0
 
         # Apply per-joint sign and offset mapping
         # sim_joint = sign * physical_joint + offset

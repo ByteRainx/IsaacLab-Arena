@@ -58,8 +58,9 @@ class ThreeStateGripperAction(ActionTerm):
         :class:`ContactSensor` on the gripper fingers reports force
         above ``force_threshold`` on **both** fingers simultaneously.
     *   **GRASP** is a sticky state — the gripper holds the object at
-        ``grasp_pos`` and ignores further "close" commands.  Only an
-        explicit "open" command exits GRASP.
+        the joint position captured at the moment contact was detected,
+        adapting to object size.  Only an explicit "open" command exits
+        GRASP.
 
     **Absolute input** (``absolute_input = True``, joint teleop):
       - input ≥ ``open_threshold``  → *cmd = open*
@@ -87,15 +88,18 @@ class ThreeStateGripperAction(ActionTerm):
         self._raw_actions = torch.zeros(self.num_envs, 1, device=self.device)
         self._processed_actions = torch.zeros(self.num_envs, self._num_joints, device=self.device)
 
-        # Parse the three fixed target positions
         self._open_pos = self._parse_command(self.cfg.open_command_expr)
-        self._grasp_pos = self._parse_command(self.cfg.grasp_command_expr)
         self._close_pos = self._parse_command(self.cfg.close_command_expr)
 
         # ── State machine bookkeeping ──────────────────────────────────
-        # Per-env state: 0=OPEN, 1=CLOSE, 2=GRASP
         self._state = torch.full(
             (self.num_envs,), _STATE_OPEN, dtype=torch.long, device=self.device
+        )
+
+        # Per-env captured joint position at the instant contact is detected.
+        # Each env gets its own snapshot, adapting to the grasped object's size.
+        self._grasp_hold_pos = torch.zeros(
+            self.num_envs, self._num_joints, device=self.device
         )
 
         # Contact sensor (lazy-initialised on first use)
@@ -202,19 +206,23 @@ class ThreeStateGripperAction(ActionTerm):
         # Re-evaluate is_close after possible OPEN→CLOSE transition above
         is_close = self._state == _STATE_CLOSE
         force_contact = self._both_fingers_in_contact()
-        self._state[is_close & force_contact] = _STATE_GRASP
+        entering_grasp = is_close & force_contact
+
+        if entering_grasp.any():
+            current_joint_pos = self._asset.data.joint_pos[:, self._joint_ids]
+            self._grasp_hold_pos[entering_grasp] = current_joint_pos[entering_grasp] * self.cfg.grasp_hold_ratio
+
+        self._state[entering_grasp] = _STATE_GRASP
 
         # GRASP → OPEN  (explicit open command)
         self._state[is_grasp & cmd_open] = _STATE_OPEN
 
         # ── 3. Map state → target joint position ─────────────────────
         open_t = self._open_pos.unsqueeze(0).expand(self.num_envs, -1)
-        grasp_t = self._grasp_pos.unsqueeze(0).expand(self.num_envs, -1)
         close_t = self._close_pos.unsqueeze(0).expand(self.num_envs, -1)
 
-        # Start from close, layer grasp, then open
         target = close_t.clone()
-        target[self._state == _STATE_GRASP] = grasp_t[self._state == _STATE_GRASP]
+        target[self._state == _STATE_GRASP] = self._grasp_hold_pos[self._state == _STATE_GRASP]
         target[self._state == _STATE_OPEN] = open_t[self._state == _STATE_OPEN]
 
         self._processed_actions[:] = target
@@ -227,6 +235,7 @@ class ThreeStateGripperAction(ActionTerm):
     def reset(self, env_ids: torch.Tensor) -> None:
         self._raw_actions[env_ids] = 0.0
         self._state[env_ids] = _STATE_OPEN
+        self._grasp_hold_pos[env_ids] = 0.0
 
 
 @configclass
@@ -244,9 +253,6 @@ class ThreeStateGripperActionCfg(ActionTermCfg):
 
     open_command_expr: dict[str, float] = MISSING
     """Joint target for **OPEN** state (e.g. ``{"left_arm_gripper": 5.0}``)."""
-
-    grasp_command_expr: dict[str, float] = MISSING
-    """Joint target for **GRASP** state (e.g. ``{"left_arm_gripper": 1.7}``)."""
 
     close_command_expr: dict[str, float] = MISSING
     """Joint target for **CLOSE** state (e.g. ``{"left_arm_gripper": 0.0}``)."""
@@ -273,6 +279,11 @@ class ThreeStateGripperActionCfg(ActionTermCfg):
     force_threshold: float = 5.0
     """Contact force (N) that must be exceeded on **both** fingers
     simultaneously to trigger CLOSE → GRASP.  Lower = more sensitive."""
+
+    grasp_hold_ratio: float = 0.75
+    """Fraction of the contact-moment joint position to hold in GRASP state.
+    Lower values grip tighter (0.5 = 50%), higher values grip looser (0.9 = 90%).
+    Default 0.75 works for larger objects like apples; use ~0.5 for small/thin objects."""
 
     left_finger_body_regex: str = ".*_gripper_left_link"
     """Regex matching the **left** finger body in the contact sensor."""
@@ -338,17 +349,11 @@ class ContactLimitedGripperAction(ActionTerm):
             raise ValueError(f"Could not resolve all joints. Missing: {set(self._joint_names) - set(name_list)}")
         self._close_command[index_list] = torch.tensor(value_list, device=self.device)
 
-        # Parse grasp command
-        self._grasp_command = torch.zeros_like(self._open_command)
-        index_list, name_list, value_list = string_utils.resolve_matching_names_values(
-            self.cfg.grasp_command_expr, self._joint_names
-        )
-        if len(index_list) != self._num_joints:
-            raise ValueError(f"Could not resolve all joints. Missing: {set(self._joint_names) - set(name_list)}")
-        self._grasp_command[index_list] = torch.tensor(value_list, device=self.device)
-
         # Track grasp state (when force limit is reached)
         self._is_grasping = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
+        # Per-env captured joint position at contact moment
+        self._grasp_hold_pos = torch.zeros(self.num_envs, self._num_joints, device=self.device)
 
         # Track previous close command state
         self._prev_is_closing = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -427,22 +432,24 @@ class ContactLimitedGripperAction(ActionTerm):
         # Check contact force threshold (requires both fingers in contact)
         force_exceeded = self._compute_force_exceeded()
 
-        # When closing and force exceeded, switch to grasp target
-        should_grasp = is_closing & force_exceeded & ~self._is_grasping
-        self._is_grasping[should_grasp] = True
+        # When closing and force exceeded, capture current joint pos and enter grasp
+        entering_grasp = is_closing & force_exceeded & ~self._is_grasping
+        if entering_grasp.any():
+            current_joint_pos = self._asset.data.joint_pos[:, self._joint_ids]
+            self._grasp_hold_pos[entering_grasp] = current_joint_pos[entering_grasp] - 0.15
+        self._is_grasping[entering_grasp] = True
 
-        # Compute target positions
-        # Default: open or close command
+        # Compute target positions: open or close
         target_pos = torch.where(
             is_closing.unsqueeze(-1),
             self._close_command.unsqueeze(0).expand(self.num_envs, -1),
             self._open_command.unsqueeze(0).expand(self.num_envs, -1),
         )
 
-        # Override with grasp target when grasping
+        # Override with captured hold position when grasping
         target_pos = torch.where(
             self._is_grasping.unsqueeze(-1),
-            self._grasp_command.unsqueeze(0).expand(self.num_envs, -1),
+            self._grasp_hold_pos,
             target_pos,
         )
 
@@ -458,6 +465,7 @@ class ContactLimitedGripperAction(ActionTerm):
     def reset(self, env_ids: torch.Tensor) -> None:
         self._raw_actions[env_ids] = 0.0
         self._is_grasping[env_ids] = False
+        self._grasp_hold_pos[env_ids] = 0.0
         self._prev_is_closing[env_ids] = False
 
 
@@ -475,9 +483,6 @@ class ContactLimitedGripperActionCfg(ActionTermCfg):
 
     close_command_expr: dict[str, float] = MISSING
     """Joint command for close configuration."""
-
-    grasp_command_expr: dict[str, float] = MISSING
-    """Joint command for grasp configuration (used on contact)."""
 
     contact_sensor_name: str | None = None
     """Name of the ContactSensor in the scene that tracks gripper finger contacts.

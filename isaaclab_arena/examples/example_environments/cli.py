@@ -24,6 +24,9 @@ from isaaclab_arena.examples.example_environments.ex001arm_cvpr_scene_put_blocks
 from isaaclab_arena.examples.example_environments.ex001arm_cvpr_scene_buttons_contact_environment import (
     Ex001ArmCvprSceneButtonsContactEnvironment,
 )
+from isaaclab_arena.examples.example_environments.ex001arm_cvpr_scene_put_fruits_to_basket_environment import (
+    Ex001ArmCvprScenePutFruitsToBasketEnvironment,
+)
 from isaaclab_arena.examples.example_environments.kitchen_pick_and_place_environment import (
     KitchenPickAndPlaceEnvironment,
 )
@@ -47,6 +50,7 @@ ExampleEnvironments = {
     Ex001ArmCvprScenePickAndPlaceEnvironment.name: Ex001ArmCvprScenePickAndPlaceEnvironment,
     Ex001ArmCvprScenePutBlocksToColorEnvironment.name: Ex001ArmCvprScenePutBlocksToColorEnvironment,
     Ex001ArmCvprSceneButtonsContactEnvironment.name: Ex001ArmCvprSceneButtonsContactEnvironment,
+    Ex001ArmCvprScenePutFruitsToBasketEnvironment.name: Ex001ArmCvprScenePutFruitsToBasketEnvironment,
     GalileoPickAndPlaceEnvironment.name: GalileoPickAndPlaceEnvironment,
     GalileoG1LocomanipPickAndPlaceEnvironment.name: GalileoG1LocomanipPickAndPlaceEnvironment,
     PressButtonEnvironment.name: PressButtonEnvironment,

@@ -299,14 +299,14 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             "left_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["left_arm_gripper"],
                 effort_limit_sim=200.0,
-                stiffness=40.0,
+                stiffness=200.0,
                 damping=15.0,
             ),
             # Right gripper actuator (high stiffness for snappy response)
             "right_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["right_arm_gripper"],
                 effort_limit_sim=200.0,
-                stiffness=40.0,
+                stiffness=200.0,
                 damping=15.0,
             ),
         },
@@ -331,7 +331,7 @@ class EX001ArmActionsCfg:
         asset_name="robot",
         joint_names=["left_arm_gripper"],
         open_command_expr={"left_arm_gripper": 5.0},
-        grasp_command_expr={"left_arm_gripper": 1.7},
+
         close_command_expr={"left_arm_gripper": 0.0},
         contact_sensor_name="left_gripper_contact",
         force_threshold=5.0,
@@ -353,7 +353,7 @@ class EX001ArmActionsCfg:
         asset_name="robot",
         joint_names=["right_arm_gripper"],
         open_command_expr={"right_arm_gripper": 5.0},
-        grasp_command_expr={"right_arm_gripper": 1.7},
+
         close_command_expr={"right_arm_gripper": 0.0},
         contact_sensor_name="right_gripper_contact",
         force_threshold=5.0,
@@ -384,7 +384,7 @@ class EX001ArmPhysicalTeleopActionsCfg:
         asset_name="robot",
         joint_names=["left_arm_gripper"],
         open_command_expr={"left_arm_gripper": 5.0},
-        grasp_command_expr={"left_arm_gripper": 1.7},
+
         close_command_expr={"left_arm_gripper": 0.0},
         contact_sensor_name="left_gripper_contact",
         force_threshold=5.0,
@@ -406,7 +406,7 @@ class EX001ArmPhysicalTeleopActionsCfg:
         asset_name="robot",
         joint_names=["right_arm_gripper"],
         open_command_expr={"right_arm_gripper": 5.0},
-        grasp_command_expr={"right_arm_gripper": 1.7},
+
         close_command_expr={"right_arm_gripper": 0.0},
         contact_sensor_name="right_gripper_contact",
         force_threshold=5.0,
@@ -439,7 +439,7 @@ class EX001ArmJointActionsCfg:
         asset_name="robot",
         joint_names=["left_arm_gripper"],
         open_command_expr={"left_arm_gripper": 5.0},
-        grasp_command_expr={"left_arm_gripper": 1.7},
+
         close_command_expr={"left_arm_gripper": 0.0},
         absolute_input=True,
         open_threshold=3.3,
@@ -463,7 +463,7 @@ class EX001ArmJointActionsCfg:
         asset_name="robot",
         joint_names=["right_arm_gripper"],
         open_command_expr={"right_arm_gripper": 5.0},
-        grasp_command_expr={"right_arm_gripper": 1.7},
+
         close_command_expr={"right_arm_gripper": 0.0},
         absolute_input=True,
         open_threshold=3.3,

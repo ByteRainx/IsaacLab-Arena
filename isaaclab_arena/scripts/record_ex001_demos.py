@@ -285,12 +285,23 @@ def main() -> None:
     env_cfg.recorders.dataset_export_dir_path = output_dir
     env_cfg.recorders.dataset_filename = current_output_file_name
     env_cfg.recorders.dataset_export_mode = DatasetExportMode.EXPORT_ALL
+    env_cfg.recorders.export_in_record_pre_reset = False
 
     try:
         env = gym.make(env_name, cfg=env_cfg).unwrapped
     except Exception as e:
         omni.log.error(f"Failed to create environment: {e}")
         exit(1)
+
+    if (
+        hasattr(env.recorder_manager, "_dataset_file_handler")
+        and env.recorder_manager._dataset_file_handler is not None
+    ):
+        env.recorder_manager._dataset_file_handler.close()
+        env.recorder_manager._dataset_file_handler = None
+    _startup_empty = os.path.join(output_dir, f"{current_output_file_name}.hdf5")
+    if os.path.exists(_startup_empty) and os.path.getsize(_startup_empty) < 8192:
+        os.remove(_startup_empty)
 
     expected_action_dim = _get_expected_action_dim(env) or env.action_space.shape[-1]
     teleop_interface = create_teleop_interface(env, env_cfg)
@@ -314,51 +325,46 @@ def main() -> None:
         nonlocal recorded_demos, current_output_file_name, current_output_path
         nonlocal running_recording
 
-        # Export current episode
-        env.recorder_manager.record_pre_reset([0], force_export_or_skip=False)
-        env.recorder_manager.export_episodes([0])
-
-        recorded_demos += 1
-        print(f"[{recorded_demos}] Demo exported to: {current_output_path}")
-
-        # Close existing dataset file handler to allow new file creation
-        if hasattr(env.recorder_manager, '_dataset_file_handler') and env.recorder_manager._dataset_file_handler is not None:
-            env.recorder_manager._dataset_file_handler.close()
-
-        # Prepare new filename for next trajectory
         current_output_file_name = _next_available_filename()
         current_output_path = os.path.join(output_dir, f"{current_output_file_name}.hdf5")
 
-        # Update recorder config and create new file handler
         env.recorder_manager.cfg.dataset_filename = current_output_file_name
-        env.recorder_manager._dataset_file_handler = env.recorder_manager.cfg.dataset_file_handler_class_type()
-        env.recorder_manager._dataset_file_handler.create(
+        fh = env.recorder_manager.cfg.dataset_file_handler_class_type()
+        fh.create(
             os.path.join(output_dir, current_output_file_name),
-            env_name=getattr(env.cfg, "env_name", None)
+            env_name=getattr(env.cfg, "env_name", None),
         )
-        env.recorder_manager.reset([0])
+        env.recorder_manager._dataset_file_handler = fh
 
-        # Reset environment
+        env.recorder_manager.record_pre_reset([0], force_export_or_skip=False)
+        env.recorder_manager.export_episodes([0])
+        recorded_demos += 1
+        print(f"[{recorded_demos}] Demo exported to: {current_output_path}")
+
+        fh.close()
+        env.recorder_manager._dataset_file_handler = None
+
+        env.recorder_manager.reset([0])
         env.sim.reset()
         env.reset()
         teleop_interface.reset()
         _store_home_ee_poses()
 
-        # Stop recording, wait for user to click START
-        running_recording = False
+        running_recording = not is_vr
         print("=" * 60)
         print(f"[INFO] Ready for next trajectory: {current_output_file_name}.hdf5")
-        print("[INFO] Click START in VR to begin recording next trajectory")
+        if is_vr:
+            print("[INFO] Click START in VR to begin recording next trajectory")
         print("=" * 60)
 
     def reset_only() -> None:
-        env.sim.reset()
         env.recorder_manager.reset([0])
+        env.sim.reset()
         env.reset()
         teleop_interface.reset()
         _store_home_ee_poses()
         auto_reset.clear()
-        print("[INFO] Environment reset (no export).")
+        print("[INFO] Environment reset — recording discarded.")
 
     def request_reset() -> None:
         nonlocal should_reset

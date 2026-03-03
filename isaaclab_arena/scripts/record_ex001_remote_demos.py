@@ -492,6 +492,12 @@ def main() -> None:
         recorded_demos += 1
         print(f"[{recorded_demos}] Demo exported to: {current_output_path}")
 
+        # Signal the bridge to save its recording buffer with the same name
+        if hasattr(teleop_interface, "send_signal"):
+            teleop_interface.send_signal(
+                "save_episode", name=current_output_file_name
+            )
+
         # 3. Close the file handler — no pre-creation for the next file
         fh.close()
         env.recorder_manager._dataset_file_handler = None
@@ -515,6 +521,10 @@ def main() -> None:
         No data is exported; the recorder buffer is cleared BEFORE env.reset()
         so that record_pre_reset (even if it somehow fires) has nothing to write.
         """
+        # Signal the bridge to discard its recording buffer too
+        if hasattr(teleop_interface, "send_signal"):
+            teleop_interface.send_signal("discard_episode")
+
         env.recorder_manager.reset([0])       # clear buffer first
         env.sim.reset()
         env.reset()

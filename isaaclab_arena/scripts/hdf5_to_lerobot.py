@@ -8,7 +8,7 @@ Reads HDF5 files produced by record_ex001_remote_demos.py (with --enable_cameras
 where each HDF5 file is a single episode containing actions, camera images, and
 state observations.
 
-Output format follows GR00T-LeRobot v2.1 standard (per-episode files):
+Output format follows LeRobot v2.1 standard (per-episode files):
   data/chunk-000/episode_000000.parquet  (one per episode)
   videos/chunk-000/observation.images.faceImg/episode_000000.mp4  (per camera)
   meta/info.json, episodes.jsonl, tasks.jsonl
@@ -16,11 +16,15 @@ Output format follows GR00T-LeRobot v2.1 standard (per-episode files):
 Camera naming aligned with convert2lerobot.py:
   head_cam -> faceImg, left_wrist_cam -> leftImg, right_wrist_cam -> rightImg
 
+State mode (--state_mode):
+  joints -- observation.state = previous frame's action (joint positions)
+  ee     -- observation.state = end-effector pose [pos(3)+euler(3)+gripper(1)] x 2 arms
+
 Auto-detects and skips duplicate initial frames.
 
 Usage:
-    python hdf5_to_lerobot.py
-    python hdf5_to_lerobot.py --input_dir /path/to/data --output_dir /path/to/output
+    python hdf5_to_lerobot.py --state_mode joints
+    python hdf5_to_lerobot.py --state_mode ee --input_dir /path/to/data
 """
 
 import argparse
@@ -108,15 +112,17 @@ def get_video_metadata(video_path: str) -> dict | None:
         output = subprocess.check_output(cmd).decode('utf-8')
         probe_data = json.loads(output)
         stream = probe_data['streams'][0]
+        height = int(stream['height'])
+        width = int(stream['width'])
         num, den = map(int, stream['r_frame_rate'].split('/'))
         fps = num / den
         return {
             'dtype': 'video',
-            'shape': [stream['height'], stream['width'], 3],
-            'names': ['height', 'width', 'channel'],
+            'shape': [height, width, 3],
+            'names': ['height', 'width', 'channels'],
             'video_info': {
-                'video.width': stream['width'],
-                'video.height': stream['height'],
+                'video.height': height,
+                'video.width': width,
                 'video.fps': fps,
                 'video.codec': stream['codec_name'],
                 'video.pix_fmt': stream['pix_fmt'],
@@ -136,11 +142,14 @@ def _quat_to_euler(quat_wxyz: np.ndarray) -> np.ndarray:
     return R.from_quat(quat_xyzw).as_euler('xyz').astype(np.float32)
 
 
-def extract_episode_data(hdf5_path: Path, min_skip: int = 1) -> dict:
+def extract_episode_data(hdf5_path: Path, state_mode: str = 'joints', min_skip: int = 1) -> dict:
     """Extract episode data from a single HDF5 file.
 
-    Reads actions, camera images, and state observations produced by
-    record_ex001_remote_demos.py.
+    Args:
+        hdf5_path: Path to the HDF5 file.
+        state_mode: 'joints' uses previous frame's action as state;
+                    'ee' uses end-effector pose [pos+euler+gripper] x 2 arms.
+        min_skip: Minimum number of initial frames to skip.
 
     Returns dict with: actions, state, cameras, num_frames, skip_n
     """
@@ -175,31 +184,47 @@ def extract_episode_data(hdf5_path: Path, min_skip: int = 1) -> dict:
 
         n_frames = total_frames - skip_n
 
-        # Actions: raw joint-space actions (14D)
         actions = demo['actions'][skip_n:].astype(np.float32)
 
-        # State: [eef_pos(3), euler(3), gripper(1)] x 2 arms = 14D
-        state_parts = []
-        has_state = True
+        if state_mode == 'joints':
+            # state[t] = action[t-1]; state[0] = action[0] (no previous frame)
+            state = np.empty_like(actions)
+            state[0] = actions[0]
+            if len(actions) > 1:
+                state[1:] = actions[:-1]
+        elif state_mode == 'ee':
+            # [eef_pos(3), euler(3), gripper(1)] x 2 arms = 14D
+            state_parts = []
+            has_left = (
+                'eef_pos' in obs_group
+                and 'eef_quat' in obs_group
+                and 'gripper_pos' in obs_group
+            )
+            has_right = (
+                'right_eef_pos' in obs_group
+                and 'right_eef_quat' in obs_group
+                and 'right_gripper_pos' in obs_group
+            )
 
-        if 'eef_pos' in obs_group and 'eef_quat' in obs_group and 'gripper_pos' in obs_group:
-            state_parts.append(obs_group['eef_pos'][skip_n:].astype(np.float32))
-            state_parts.append(_quat_to_euler(obs_group['eef_quat'][skip_n:].astype(np.float32)))
-            state_parts.append(obs_group['gripper_pos'][skip_n:].astype(np.float32))
-        else:
-            has_state = False
+            if has_left:
+                state_parts.append(obs_group['eef_pos'][skip_n:].astype(np.float32))
+                state_parts.append(_quat_to_euler(obs_group['eef_quat'][skip_n:].astype(np.float32)))
+                state_parts.append(obs_group['gripper_pos'][skip_n:].astype(np.float32))
 
-        if 'right_eef_pos' in obs_group and 'right_eef_quat' in obs_group and 'right_gripper_pos' in obs_group:
-            state_parts.append(obs_group['right_eef_pos'][skip_n:].astype(np.float32))
-            state_parts.append(_quat_to_euler(obs_group['right_eef_quat'][skip_n:].astype(np.float32)))
-            state_parts.append(obs_group['right_gripper_pos'][skip_n:].astype(np.float32))
-        else:
-            has_state = False
+            if has_right:
+                state_parts.append(obs_group['right_eef_pos'][skip_n:].astype(np.float32))
+                state_parts.append(_quat_to_euler(obs_group['right_eef_quat'][skip_n:].astype(np.float32)))
+                state_parts.append(obs_group['right_gripper_pos'][skip_n:].astype(np.float32))
 
-        if has_state and state_parts:
-            state = np.concatenate(state_parts, axis=1)
+            if state_parts:
+                state = np.concatenate(state_parts, axis=1)
+            else:
+                raise ValueError(
+                    f'state_mode="ee" requires eef_pos/eef_quat/gripper_pos in obs, '
+                    f'available keys: {list(obs_group.keys())}'
+                )
         else:
-            state = np.zeros((n_frames, 14), dtype=np.float32)
+            raise ValueError(f'Unknown state_mode: {state_mode!r}. Use "joints" or "ee".')
 
         # Camera observations (prefer camera_obs group, fallback to obs)
         cameras = {}
@@ -254,16 +279,12 @@ def write_episode_parquet(
     data = {
         'observation.state': list(state),
         'action': list(actions),
-        'timestamp': np.arange(num_frames, dtype=np.float64) / FPS,
+        'timestamp': np.arange(num_frames, dtype=np.float32) / FPS,
         'episode_index': np.full(num_frames, episode_index, dtype=np.int64),
         'index': np.arange(global_index_start, global_index_start + num_frames, dtype=np.int64),
         'frame_index': np.arange(num_frames, dtype=np.int64),
         'task_index': np.full(num_frames, task_index, dtype=np.int64),
-        'next.reward': np.zeros(num_frames, dtype=np.float64),
-        'next.done': np.zeros(num_frames, dtype=bool),
     }
-    data['next.reward'][-1] = 1.0
-    data['next.done'][-1] = True
 
     df = pd.DataFrame(data)
     df.to_parquet(parquet_path)
@@ -291,6 +312,11 @@ def parse_args():
         help='Task description for all episodes',
     )
     parser.add_argument(
+        '--state_mode', type=str, default='joints', choices=['joints', 'ee'],
+        help="State representation: 'joints' (prev action as state) or "
+             "'ee' (end-effector pose). Default: joints",
+    )
+    parser.add_argument(
         '--force', action='store_true',
         help='Force overwrite existing output directory',
     )
@@ -304,6 +330,7 @@ def main():
     input_dir = Path(args.input_dir)
     output_dir = Path(args.output_dir)
     task = args.task
+    state_mode = args.state_mode
 
     # --- Discover HDF5 files ---
     print(f'Scanning for HDF5 files in: {input_dir}')
@@ -330,7 +357,7 @@ def main():
     meta_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Analyze first file for dimensions ---
-    first_data = extract_episode_data(hdf5_files[0])
+    first_data = extract_episode_data(hdf5_files[0], state_mode=state_mode)
     action_dim = first_data['actions'].shape[1]
     state_dim = first_data['state'].shape[1]
     available_cameras = list(first_data['cameras'].keys())
@@ -338,6 +365,7 @@ def main():
 
     print('\nDataset configuration:')
     print(f'  FPS:          {FPS}')
+    print(f'  State mode:   {state_mode}')
     print(f'  Action dim:   {action_dim}')
     print(f'  State dim:    {state_dim}')
     print(f'  Video shape:  {cam0_shape}')
@@ -355,7 +383,7 @@ def main():
         print(f'\n[Episode {episode_index}] {hdf5_path.name}')
 
         try:
-            ep_data = extract_episode_data(hdf5_path)
+            ep_data = extract_episode_data(hdf5_path, state_mode=state_mode)
         except Exception as e:
             print(f'  ERROR: {e}, skipping.')
             continue
@@ -422,7 +450,7 @@ def main():
         for ep in episodes_info:
             f.write(json.dumps(ep) + '\n')
 
-    # --- Build features dict ---
+    # --- Build features dict (v2.1 compliant) ---
     features = {}
     for video_key, meta in video_meta_cache.items():
         features[video_key] = meta
@@ -437,13 +465,11 @@ def main():
         'shape': [action_dim],
         'names': None,
     }
-    features['timestamp'] = {'dtype': 'float64', 'shape': [1]}
-    features['episode_index'] = {'dtype': 'int64', 'shape': [1]}
-    features['index'] = {'dtype': 'int64', 'shape': [1]}
-    features['frame_index'] = {'dtype': 'int64', 'shape': [1]}
-    features['task_index'] = {'dtype': 'int64', 'shape': [1]}
-    features['next.reward'] = {'dtype': 'float64', 'shape': [1]}
-    features['next.done'] = {'dtype': 'bool', 'shape': [1]}
+    features['timestamp'] = {'dtype': 'float32', 'shape': [1], 'names': None}
+    features['frame_index'] = {'dtype': 'int64', 'shape': [1], 'names': None}
+    features['episode_index'] = {'dtype': 'int64', 'shape': [1], 'names': None}
+    features['index'] = {'dtype': 'int64', 'shape': [1], 'names': None}
+    features['task_index'] = {'dtype': 'int64', 'shape': [1], 'names': None}
 
     # --- Write meta/info.json ---
     num_episodes = len(episodes_info)
@@ -459,7 +485,7 @@ def main():
         'fps': FPS,
         'splits': {'train': f'0:{num_episodes}'},
         'data_path': DATA_PATH_TEMPLATE,
-        'video_path': VIDEO_PATH_TEMPLATE,
+        'video_path': VIDEO_PATH_TEMPLATE if available_cameras else None,
         'features': features,
     }
     info_path = meta_dir / 'info.json'
@@ -469,9 +495,12 @@ def main():
     print('\n' + '=' * 60)
     print('Conversion complete!')
     print('  Format:     LeRobot v2.1')
+    print(f'  State mode: {state_mode}')
     print(f'  Output:     {output_dir}')
     print(f'  Episodes:   {num_episodes}')
     print(f'  Frames:     {total_frames}')
+    print(f'  Action dim: {action_dim}')
+    print(f'  State dim:  {state_dim}')
     print(f'  FPS:        {FPS}')
     print(f'  Cameras:    {available_cameras}')
     print('=' * 60)
