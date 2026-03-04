@@ -58,10 +58,6 @@ assets/
 │   ├── wood_bottom/
 │   ├── yellow_brick/
 │   └── yellow_paper/
-├── openarm_bimanual/           # OpenArm 双臂（外部团队维护）
-│   ├── configuration/
-│   ├── openarm_bimanual.mtl
-│   └── openarm_bimanual.usd
 └── scene-3dgs/                 # 3DGS 背景场景
     ├── 12_25_01/
     ├── 12_25_02/
@@ -98,7 +94,7 @@ assets/
 | 文件 | 说明 |
 |------|------|
 | `ex001arm_openxr_bimanual.py` | VR OpenXR 双臂遥操 (14D: left_se3 + grip + right_se3 + grip) |
-| `ex001arm_ws_remote.py` | WebSocket 远程遥操 (Joint 关节直通模式) |
+| `ex001arm_ws_remote.py` | WebSocket 远程遥操（支持 `ee` / `joint` 两种模式） |
 
 #### `isaaclab_arena/scripts/` — 运行脚本
 
@@ -163,7 +159,7 @@ OPEN ──(cmd=close)──→ CLOSE ──(contact force)──→ GRASP
 ```
 
 - **CLOSE → GRASP**：双指接触力均超过阈值时触发
-- **GRASP 开合度**：**快照触发瞬间的实际关节位置**，自适应物体大小（非固定值）
+- **GRASP 开合度**：接触触发瞬间的关节位置快照再乘以系数（`grasp_hold_ratio`），自适应物体大小（非固定值）
 - **GRASP → OPEN**：仅响应明确的 open 指令
 
 ### 3.3 环境组装模式
@@ -259,7 +255,8 @@ python isaaclab_arena/scripts/replay_and_record_demos.py \
 python isaaclab_arena/scripts/ros1_ws_bridge.py --mode joint --hz 200
 
 # 仿真端
-python -m isaaclab_arena.scripts.record_ex001_remote_demos \
+python isaaclab_arena/scripts/record_ex001_demos.py \
+  --teleop_device remote \
   --control_mode joint \
   --disable_pinocchio \
   --enable_cameras \
@@ -279,7 +276,7 @@ python -m isaaclab_arena.scripts.record_ex001_remote_demos \
 | `--debug` | - | 打印关节诊断信息 |
 | `--remote_ip` | `10.100.21.249` | 机器人端 IP (remote 模式) |
 | `--remote_port` | `5555` | WebSocket 端口 (remote 模式) |
-| `--control_mode` | `joint` | 远程控制模式 (remote 模式) |
+| `--control_mode` | `ee` | 远程控制模式 (`ee` / `joint`, remote 模式) |
 | `--joint_signs` | `1,1,-1,-1,-1,1` | 关节符号翻转 (6 个逗号分隔) |
 | `--joint_offsets` | `0,0,0,0,0,0` | 关节偏移量 (弧度, 6 个逗号分隔) |
 
@@ -290,6 +287,22 @@ python -m isaaclab_arena.scripts.record_ex001_remote_demos \
 - 按 `R`：重置环境（丢弃当前数据，不导出）
 - 任务成功后：自动等待 2s → 执行重置轨迹 → 导出 HDF5 → 准备下一条
 - `Ctrl+C`：结束录制
+
+### 4.5 纯仿真回放（HDF5）
+
+```bash
+python isaaclab_arena/scripts/replay_demos.py \
+  --dataset_file data/ex001arm_cvpr_scene_put_blocks_to_color/arx_remote_joint_episode0.hdf5 \
+  --replay_mode joint \
+  ex001arm_cvpr_scene_put_blocks_to_color
+```
+
+`--replay_mode` 可选：
+
+- `action`：按数据集 `actions` 回放
+- `joint`：按 `obs/joint_pos` 回放（关节控制）
+- `ee`：按 `obs/eef_state`（或 `eef_pos/eef_quat/...`）回放
+- `state`：按记录状态精确回放（最接近原轨迹）
 
 ---
 
@@ -305,7 +318,6 @@ git checkout rain/migration-clean
 #    新增目录:
 #      assets/ex001arm_bimanual/
 #      assets/hunyuan_assets/
-#      assets/openarm_bimanual/
 #      assets/scene-3dgs/
 #      isaaclab_arena/embodiments/ex001arm/
 #      docs/migration_readme.md
@@ -373,11 +385,11 @@ python isaaclab_arena/scripts/teleop_bimanual_keyboard.py \
 
 | 项目 | 原始 | 迁移后 |
 |------|------|--------|
-| 录制脚本 | `record_ex001_demos.py` + `record_ex001_remote_demos.py` (两个独立脚本) | 合并为单个 `record_ex001_demos.py`，通过 `--teleop_device` 切换 |
+| 录制脚本 | `record_ex001_demos.py` + `record_ex001_remote_demos.py` (历史：两个独立脚本) | 当前仅使用 `record_ex001_demos.py` |
 | `ee_to_joint_action.py` | 独立文件 (测试用) | 已删除，不再需要 |
-| 夹爪 GRASP 开合度 | 固定 `grasp_command_expr` (如 1.7) | **自适应**：快照接触瞬间的实际关节位置 |
+| 夹爪 GRASP 开合度 | 固定 `grasp_command_expr` (如 1.7) | **自适应**：接触快照关节位置 × `grasp_hold_ratio` |
 | `tools/` 目录 | 独立顶层目录 | 合并到 `isaaclab_arena/scripts/` |
-| OpenArm embodiment | 有完整代码 | 仅保留资产 USD，embodiment 代码已移除 |
+| OpenArm embodiment | 有完整代码 | 已删除，不再迁移 |
 | `x2robot_closedloop_policy` | 有完整代码 + CLI 集成 | 已移除 |
 | 数据转换脚本 | `convert2lerobot.py` + `hdf5_to_lerobot.py` | 已移除（待独立维护） |
 

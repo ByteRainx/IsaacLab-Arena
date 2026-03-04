@@ -33,9 +33,9 @@ def all_objects_in_basket(
     env: ManagerBasedRLEnv,
     object_cfgs: list[SceneEntityCfg],
     basket_cfg: SceneEntityCfg,
-    x_threshold: float = 0.05,
-    y_threshold: float = 0.08,
-    z_threshold: float = 0.1,
+    x_threshold: float = 0.14,
+    y_threshold: float = 0.14,
+    z_threshold: float = 0.12,
     velocity_threshold: float = 0.5,
 ) -> torch.Tensor:
     """Check if all target objects are in proximity of the basket object."""
@@ -78,7 +78,7 @@ def any_object_dropped(
 
 
 class PutFruitsToBasketTask(TaskBase):
-    """Task for placing apple, grape and banana into a basket-like destination."""
+    """Task for placing apple, fruit and banana into a basket-like destination."""
 
     def __init__(
         self,
@@ -128,9 +128,9 @@ class PutFruitsToBasketTask(TaskBase):
             params={
                 "object_cfgs": target_cfgs,
                 "basket_cfg": SceneEntityCfg(self.basket.name),
-                "x_threshold": 0.10,
-                "y_threshold": 0.12,
-                "z_threshold": 0.08,
+                "x_threshold": 0.14,
+                "y_threshold": 0.14,
+                "z_threshold": 0.12,
                 "velocity_threshold": 0.5,
             },
         )
@@ -153,7 +153,7 @@ class PutFruitsToBasketTask(TaskBase):
         return self.events_cfg
 
     def get_prompt(self) -> str:
-        return "Pick up apple, grape, and banana and put them into the pink basket platform."
+        return "Pick up apple, fruit, and banana and put them into the pink basket platform."
 
     def get_mimic_env_cfg(self, embodiment_name: str):
         return PutFruitsToBasketMimicEnvCfg(

@@ -164,7 +164,7 @@ class EX001ArmSceneCfg:
             FrameTransformerCfg.FrameCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_base_link",
                 name="end_effector",
-                offset=OffsetCfg(pos=[0.0, 0.0, 0.0]),
+                offset=OffsetCfg(pos=[0.09, 0.0, 0.0]),
             ),
             # FrameTransformerCfg.FrameCfg(
             #     prim_path="{ENV_REGEX_NS}/Robot/left_arm_gripper_left_link",
@@ -187,7 +187,7 @@ class EX001ArmSceneCfg:
             FrameTransformerCfg.FrameCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_base_link",
                 name="right_end_effector",
-                offset=OffsetCfg(pos=[0.0, 0.0, 0.0]),
+                offset=OffsetCfg(pos=[0.09, 0.0, 0.0]),
             ),
             # FrameTransformerCfg.FrameCfg(
             #     prim_path="{ENV_REGEX_NS}/Robot/right_arm_gripper_left_link",
@@ -260,7 +260,6 @@ class EX001ArmSceneCfg:
         track_air_time=False,
     )
 
-
 def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
     return ArticulationCfg(
         spawn=sim_utils.UsdFileCfg(
@@ -299,14 +298,14 @@ def _make_ex001arm_articulation_cfg(usd_path: str) -> ArticulationCfg:
             "left_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["left_arm_gripper"],
                 effort_limit_sim=200.0,
-                stiffness=40.0,
+                stiffness=200.0,
                 damping=15.0,
             ),
             # Right gripper actuator (high stiffness for snappy response)
             "right_gripper_acts": ImplicitActuatorCfg(
                 joint_names_expr=["right_arm_gripper"],
                 effort_limit_sim=200.0,
-                stiffness=40.0,
+                stiffness=200.0,
                 damping=15.0,
             ),
         },

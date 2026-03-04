@@ -297,7 +297,7 @@ class Apple(LibraryObject):
     name = "apple"
     tags = ["object"]
     usd_path = f"{_get_assets_root()}/hunyuan_assets/apple/apple_physics.usd"
-    scale = (0.001, 0.001, 0.001)
+    scale = (0.0008, 0.0008, 0.0008)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
@@ -312,7 +312,7 @@ class Banana(LibraryObject):
     name = "banana"
     tags = ["object"]
     usd_path = f"{_get_assets_root()}/hunyuan_assets/banana/banana_physics.usd"
-    scale = (0.001, 0.001, 0.001)
+    scale = (0.0012, 0.0012, 0.0012)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)
@@ -432,7 +432,7 @@ class Fruit(LibraryObject):
     name = "fruit"
     tags = ["object"]
     usd_path = f"{_get_assets_root()}/hunyuan_assets/fruit/fruit_physics.usd"
-    scale = (0.001, 0.001, 0.001)
+    scale = (0.0008, 0.0008, 0.0008)
 
     def __init__(self, prim_path: str | None = None, initial_pose: Pose | None = None):
         super().__init__(prim_path=prim_path, initial_pose=initial_pose)

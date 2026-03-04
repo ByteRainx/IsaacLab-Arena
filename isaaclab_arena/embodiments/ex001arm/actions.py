@@ -208,10 +208,9 @@ class ThreeStateGripperAction(ActionTerm):
         force_contact = self._both_fingers_in_contact()
         entering_grasp = is_close & force_contact
 
-        # Snapshot the actual joint position at the moment of contact
         if entering_grasp.any():
             current_joint_pos = self._asset.data.joint_pos[:, self._joint_ids]
-            self._grasp_hold_pos[entering_grasp] = current_joint_pos[entering_grasp]
+            self._grasp_hold_pos[entering_grasp] = current_joint_pos[entering_grasp] * self.cfg.grasp_hold_ratio
 
         self._state[entering_grasp] = _STATE_GRASP
 
@@ -280,6 +279,11 @@ class ThreeStateGripperActionCfg(ActionTermCfg):
     force_threshold: float = 5.0
     """Contact force (N) that must be exceeded on **both** fingers
     simultaneously to trigger CLOSE → GRASP.  Lower = more sensitive."""
+
+    grasp_hold_ratio: float = 0.75
+    """Fraction of the contact-moment joint position to hold in GRASP state.
+    Lower values grip tighter (0.5 = 50%), higher values grip looser (0.9 = 90%).
+    Default 0.75 works for larger objects like apples; use ~0.5 for small/thin objects."""
 
     left_finger_body_regex: str = ".*_gripper_left_link"
     """Regex matching the **left** finger body in the contact sensor."""
@@ -432,7 +436,7 @@ class ContactLimitedGripperAction(ActionTerm):
         entering_grasp = is_closing & force_exceeded & ~self._is_grasping
         if entering_grasp.any():
             current_joint_pos = self._asset.data.joint_pos[:, self._joint_ids]
-            self._grasp_hold_pos[entering_grasp] = current_joint_pos[entering_grasp]
+            self._grasp_hold_pos[entering_grasp] = current_joint_pos[entering_grasp] - 0.15
         self._is_grasping[entering_grasp] = True
 
         # Compute target positions: open or close

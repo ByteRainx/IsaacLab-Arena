@@ -32,7 +32,9 @@ Usage::
 # ── Pre-simulation imports & CLI ──────────────────────────────────────────────
 
 import contextlib
+import argparse
 import os
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -41,11 +43,13 @@ from isaaclab.app import AppLauncher
 
 from isaaclab_arena.cli.isaaclab_arena_cli import get_isaaclab_arena_cli_parser
 from isaaclab_arena.examples.example_environments.cli import (
+    ExampleEnvironments,
     add_example_environments_cli_args,
     get_arena_builder_from_cli,
 )
 
 _VR_DEVICE_NAMES = {"avp_handtracking", "ex001arm_openxr_bimanual"}
+_VIEWPORT_WINDOWS: list[object] = []
 
 
 def _teleop_device_requires_xr(name: str | None) -> bool:
@@ -94,6 +98,43 @@ parser.add_argument("--joint_offsets", type=str, default="0,0,0,0,0,0",
 add_example_environments_cli_args(parser)
 args_cli = parser.parse_args()
 
+
+def _recover_teleop_device_from_argv_if_needed() -> None:
+    """Recover --teleop_device from raw argv when subparser defaults override it."""
+    if getattr(args_cli, "teleop_device", None) is not None:
+        return
+
+    argv = sys.argv[1:]
+    for i, token in enumerate(argv):
+        if token == "--teleop_device" and i + 1 < len(argv):
+            args_cli.teleop_device = argv[i + 1]
+            return
+        if token.startswith("--teleop_device="):
+            args_cli.teleop_device = token.split("=", 1)[1]
+            return
+
+
+def _recover_example_environment_from_argv_if_needed() -> None:
+    """Recover example_environment from argv and force-correct parser override issues."""
+    valid_envs = set(ExampleEnvironments.keys())
+
+    argv = sys.argv[1:]
+    env_candidates: list[str] = []
+    for token in reversed(argv):
+        if token.startswith("-"):
+            continue
+        if token in valid_envs:
+            env_candidates.append(token)
+
+    if env_candidates:
+        recovered = env_candidates[0]
+        if getattr(args_cli, "example_environment", None) != recovered:
+            args_cli.example_environment = recovered
+
+
+_recover_teleop_device_from_argv_if_needed()
+_recover_example_environment_from_argv_if_needed()
+
 # XR-aware app launcher
 app_launcher_args = vars(args_cli)
 device_name = getattr(args_cli, "teleop_device", None)
@@ -111,10 +152,16 @@ import torch
 
 import omni.log
 from isaaclab.envs.mdp.recorders.recorders_cfg import ActionStateRecorderManagerCfg
-from isaaclab.managers import DatasetExportMode
+from isaaclab.managers import DatasetExportMode, SceneEntityCfg
 from isaaclab.managers.recorder_manager import RecorderTerm, RecorderTermCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul
+from isaaclab_arena.embodiments.ex001arm.observations import (
+    ex001arm_left_eef_pos_rel0,
+    ex001arm_left_eef_quat_rel0,
+    ex001arm_right_eef_pos_rel0,
+    ex001arm_right_eef_quat_rel0,
+)
 
 DEFAULT_STEP_HZ = 30
 
@@ -307,6 +354,53 @@ def _clear_task_state(env):
             getattr(env, attr).zero_()
 
 
+def _setup_remote_multi_viewports() -> None:
+    """Create two extra viewports for left and right wrist cameras."""
+    try:
+        from omni.kit.viewport.window import ViewportWindow
+        import omni.usd
+
+        stage = omni.usd.get_context().get_stage()
+        cam_viewport_map = [
+            (2, "Left_Gripper_Camera", "Left Wrist"),
+            (3, "Right_Gripper_Camera", "Right Wrist"),
+        ]
+        cam_paths: dict[str, str] = {}
+        for prim in stage.Traverse():
+            name = prim.GetName()
+            for _, cam_name, _ in cam_viewport_map:
+                if name == cam_name:
+                    cam_paths[cam_name] = str(prim.GetPath())
+
+        # Fallback: keyword matching if exact camera names are not found.
+        if len(cam_paths) < len(cam_viewport_map):
+            lower_name_to_path: dict[str, str] = {}
+            for prim in stage.Traverse():
+                if prim.GetTypeName() == "Camera":
+                    lower_name_to_path[prim.GetName().lower()] = str(prim.GetPath())
+
+            def _find_by_keywords(*keywords: str) -> str | None:
+                for n, p in lower_name_to_path.items():
+                    if all(k in n for k in keywords):
+                        return p
+                return None
+
+            cam_paths.setdefault("Left_Gripper_Camera", _find_by_keywords("left", "gripper", "camera"))
+            cam_paths.setdefault("Right_Gripper_Camera", _find_by_keywords("right", "gripper", "camera"))
+
+        global _VIEWPORT_WINDOWS
+        _VIEWPORT_WINDOWS = []
+        for vp_num, cam_name, label in cam_viewport_map:
+            path = cam_paths.get(cam_name)
+            if path is None:
+                continue
+            vp = ViewportWindow(f"Viewport {vp_num}", width=640, height=480)
+            vp.viewport_api.set_active_camera(path)
+            _VIEWPORT_WINDOWS.append(vp)
+    except Exception:
+        pass
+
+
 # ── Teleop device creation ────────────────────────────────────────────────────
 
 def create_teleop_interface(env, env_cfg):
@@ -367,7 +461,14 @@ def main() -> None:
     is_remote = device_name == "remote"
 
     try:
-        arena_builder = get_arena_builder_from_cli(args_cli)
+        # Some example environments interpret teleop_device during env construction.
+        # "remote" is handled by this script (not by env teleop registry), so mask it
+        # while building the environment config to avoid KeyError('remote').
+        args_for_env = args_cli
+        if is_remote:
+            args_for_env = argparse.Namespace(**vars(args_cli))
+            setattr(args_for_env, "teleop_device", None)
+        arena_builder = get_arena_builder_from_cli(args_for_env)
         env_name, env_cfg = arena_builder.build_registered()
     except Exception as e:
         omni.log.error(f"Failed to parse environment configuration: {e}")
@@ -391,6 +492,26 @@ def main() -> None:
         env_cfg.terminations.success = None
     env_cfg.terminations.time_out = None
     env_cfg.observations.policy.concatenate_terms = False
+
+    # Record EE in episode-relative root frame coordinates (initial pose ~= 0),
+    # to match real-robot logging semantics.
+    policy_obs = env_cfg.observations.policy
+    if all(hasattr(policy_obs, name) for name in ("eef_pos", "eef_quat", "right_eef_pos", "right_eef_quat")):
+        policy_obs.eef_pos.func = ex001arm_left_eef_pos_rel0
+        policy_obs.eef_pos.params = {"asset_cfg": SceneEntityCfg("robot"), "ee_frame_cfg": SceneEntityCfg("ee_frame")}
+        policy_obs.eef_quat.func = ex001arm_left_eef_quat_rel0
+        policy_obs.eef_quat.params = {"asset_cfg": SceneEntityCfg("robot"), "ee_frame_cfg": SceneEntityCfg("ee_frame")}
+        policy_obs.right_eef_pos.func = ex001arm_right_eef_pos_rel0
+        policy_obs.right_eef_pos.params = {
+            "asset_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("right_ee_frame"),
+        }
+        policy_obs.right_eef_quat.func = ex001arm_right_eef_quat_rel0
+        policy_obs.right_eef_quat.params = {
+            "asset_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("right_ee_frame"),
+        }
+        print("[INFO] Recording EE as episode-relative root-frame pose (rel0)")
 
     # Output directory
     task_name = getattr(args_cli, "example_environment", "default")
@@ -461,7 +582,7 @@ def main() -> None:
 
     expected_action_dim = _get_expected_action_dim(env) or env.action_space.shape[-1]
 
-    if args_cli.debug or (is_remote and args_cli.control_mode == "joint"):
+    if args_cli.debug:
         _dump_joint_info(env)
 
     teleop_interface = create_teleop_interface(env, env_cfg)
@@ -555,6 +676,8 @@ def main() -> None:
     teleop_interface.reset()
     _store_home_ee_poses()
     _clear_task_state(env)
+    if is_remote and enable_cameras:
+        _setup_remote_multi_viewports()
 
     print(f"Using teleop device:\n{teleop_interface}")
     print("=" * 60)

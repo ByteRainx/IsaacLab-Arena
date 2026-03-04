@@ -130,6 +130,105 @@ def ex001arm_right_eef_quat_base(
 
 
 # ---------------------------------------------------------------------------
+# Episode-relative EE observations (origin at episode start, initial ~= zero)
+# ---------------------------------------------------------------------------
+
+def _get_episode_eef_origin(
+    env,
+    origin_pos_attr: str,
+    origin_quat_attr: str,
+    curr_pos: torch.Tensor,
+    curr_quat_wxyz: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Get (or lazily initialize) per-env EE origin at episode start."""
+    if not hasattr(env, origin_pos_attr) or not hasattr(env, origin_quat_attr):
+        setattr(env, origin_pos_attr, curr_pos.clone())
+        setattr(env, origin_quat_attr, curr_quat_wxyz.clone())
+
+    origin_pos: torch.Tensor = getattr(env, origin_pos_attr)
+    origin_quat: torch.Tensor = getattr(env, origin_quat_attr)
+
+    # Refresh origin on reset frames (episode_length_buf == 0).
+    if hasattr(env, "episode_length_buf"):
+        reset_mask = env.episode_length_buf == 0
+        if torch.any(reset_mask):
+            origin_pos[reset_mask] = curr_pos[reset_mask]
+            origin_quat[reset_mask] = curr_quat_wxyz[reset_mask]
+
+    return origin_pos, origin_quat
+
+
+def ex001arm_left_eef_pos_rel0(
+    env,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+) -> torch.Tensor:
+    """Left EE position in root frame relative to episode-start EE origin."""
+    pos, quat_wxyz = _ee_pose_in_root_frame(env, ee_frame_cfg, asset_cfg)
+    origin_pos, _ = _get_episode_eef_origin(
+        env,
+        "_ex001arm_left_eef_origin_pos",
+        "_ex001arm_left_eef_origin_quat_wxyz",
+        pos,
+        quat_wxyz,
+    )
+    return pos - origin_pos
+
+
+def ex001arm_left_eef_quat_rel0(
+    env,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+) -> torch.Tensor:
+    """Left EE quaternion relative to episode-start origin, in xyzw."""
+    pos, quat_wxyz = _ee_pose_in_root_frame(env, ee_frame_cfg, asset_cfg)
+    _, origin_quat_wxyz = _get_episode_eef_origin(
+        env,
+        "_ex001arm_left_eef_origin_pos",
+        "_ex001arm_left_eef_origin_quat_wxyz",
+        pos,
+        quat_wxyz,
+    )
+    rel_quat_wxyz = math_utils.quat_mul(quat_wxyz, math_utils.quat_inv(origin_quat_wxyz))
+    return rel_quat_wxyz[:, [1, 2, 3, 0]]
+
+
+def ex001arm_right_eef_pos_rel0(
+    env,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("right_ee_frame"),
+) -> torch.Tensor:
+    """Right EE position in root frame relative to episode-start EE origin."""
+    pos, quat_wxyz = _ee_pose_in_root_frame(env, ee_frame_cfg, asset_cfg)
+    origin_pos, _ = _get_episode_eef_origin(
+        env,
+        "_ex001arm_right_eef_origin_pos",
+        "_ex001arm_right_eef_origin_quat_wxyz",
+        pos,
+        quat_wxyz,
+    )
+    return pos - origin_pos
+
+
+def ex001arm_right_eef_quat_rel0(
+    env,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("right_ee_frame"),
+) -> torch.Tensor:
+    """Right EE quaternion relative to episode-start origin, in xyzw."""
+    pos, quat_wxyz = _ee_pose_in_root_frame(env, ee_frame_cfg, asset_cfg)
+    _, origin_quat_wxyz = _get_episode_eef_origin(
+        env,
+        "_ex001arm_right_eef_origin_pos",
+        "_ex001arm_right_eef_origin_quat_wxyz",
+        pos,
+        quat_wxyz,
+    )
+    rel_quat_wxyz = math_utils.quat_mul(quat_wxyz, math_utils.quat_inv(origin_quat_wxyz))
+    return rel_quat_wxyz[:, [1, 2, 3, 0]]
+
+
+# ---------------------------------------------------------------------------
 # Normalized gripper observations [0, 1] (matches real robot training data)
 # ---------------------------------------------------------------------------
 

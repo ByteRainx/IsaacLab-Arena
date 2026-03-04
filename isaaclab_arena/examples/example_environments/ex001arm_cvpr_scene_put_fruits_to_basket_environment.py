@@ -11,7 +11,7 @@ from isaaclab_arena.examples.example_environments.example_environment_base impor
 
 
 class Ex001ArmCvprScenePutFruitsToBasketEnvironment(ExampleEnvironmentBase):
-    """Put apple, grape and banana into pink platform basket with cvpr_assets background."""
+    """Put apple, fruit and banana into pink platform basket with cvpr_assets background."""
 
     name: str = "ex001arm_cvpr_scene_put_fruits_to_basket"
 
@@ -113,8 +113,8 @@ class Ex001ArmCvprScenePutFruitsToBasketEnvironment(ExampleEnvironmentBase):
         bread = self.asset_registry.get_asset_by_name("bread")()
         bread.set_initial_pose(Pose(position_xyz=(0.05, -0.30, obj_z), rotation_wxyz=(1.0, 0.0, 0.0, 0.0)))
 
-        grape = self.asset_registry.get_asset_by_name("grape")()
-        grape.set_initial_pose(Pose(position_xyz=(0.05, -0.10, obj_z), rotation_wxyz=(1.0, 0.0, 0.0, 0.0)))
+        fruit = self.asset_registry.get_asset_by_name("fruit")()
+        fruit.set_initial_pose(Pose(position_xyz=(0.05, -0.10, obj_z), rotation_wxyz=(1.0, 0.0, 0.0, 0.0)))
 
         apple = self.asset_registry.get_asset_by_name("apple")()
         apple.set_initial_pose(Pose(position_xyz=(0.05, 0.10, obj_z), rotation_wxyz=(1.0, 0.0, 0.0, 0.0)))
@@ -130,13 +130,13 @@ class Ex001ArmCvprScenePutFruitsToBasketEnvironment(ExampleEnvironmentBase):
             )
         )
 
-        scene = Scene(assets=[background, bread, grape, apple, banana, platform_pink])
+        scene = Scene(assets=[background, bread, fruit, apple, banana, platform_pink])
         task = _CvprScenePutFruitsToBasketTask(
             x_range=obj_x_range,
             y_range=obj_y_range,
             z_val=obj_z,
-            target_objects=[apple, grape, banana],
-            all_objects=[bread, grape, apple, banana],
+            target_objects=[apple, fruit, banana],
+            all_objects=[bread, fruit, apple, banana],
             basket=platform_pink,
             background_scene=background,
         )
